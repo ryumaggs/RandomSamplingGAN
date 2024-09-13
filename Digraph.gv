@@ -1,0 +1,170 @@
+digraph {
+	graph [size="12.15,12.15"]
+	node [align=left fontname=monospace fontsize=10 height=0.2 ranksep=0.1 shape=box style=filled]
+	140055046506192 [label="
+ (2, 1)" fillcolor=darkolivegreen1]
+	140055046874352 -> 140055046504832 [dir=none]
+	140055046504832 [label="mat1
+ (2, 50)" fillcolor=orange]
+	140055046874352 -> 140055046504592 [dir=none]
+	140055046504592 [label="mat2
+ (50, 1)" fillcolor=orange]
+	140055046874352 [label="AddmmBackward0
+----------------------------
+alpha       :              1
+beta        :              1
+mat1        : [saved tensor]
+mat1_sizes  :        (2, 50)
+mat1_strides:        (50, 1)
+mat2        : [saved tensor]
+mat2_sizes  :        (50, 1)
+mat2_strides:        (1, 50)"]
+	140055047573360 -> 140055046874352
+	140055046170720 [label="
+ (1)" fillcolor=lightblue]
+	140055046170720 -> 140055047573360
+	140055047573360 [label=AccumulateGrad]
+	140055046874064 -> 140055046874352
+	140055046874064 -> 140055046504512 [dir=none]
+	140055046504512 [label="tensors[0]
+ (50)" fillcolor=orange]
+	140055046874064 -> 140055046504992 [dir=none]
+	140055046504992 [label="tensors[1]
+ (50)" fillcolor=orange]
+	140055046874064 [label="StackBackward0
+------------------------
+dim    :               0
+tensors: [saved tensors]"]
+	140055046873872 -> 140055046874064
+	140055046873872 [label="ReshapeAliasBackward0
+---------------------
+self_sizes: (5, 10)"]
+	140055046873488 -> 140055046873872
+	140055046873488 -> 140055046169760 [dir=none]
+	140055046169760 [label="mat2
+ (10, 10)" fillcolor=orange]
+	140055046873488 [label="MmBackward0
+----------------------------
+mat2        : [saved tensor]
+mat2_sizes  :       (10, 10)
+mat2_strides:             ()
+self        :           None
+self_sizes  :        (5, 10)
+self_strides:        (10, 1)"]
+	140055046873920 -> 140055046873488
+	140055046873920 -> 140055046507552 [dir=none]
+	140055046507552 [label="result
+ (5, 10)" fillcolor=orange]
+	140055046873920 -> 140055046505712 [dir=none]
+	140055046505712 [label="self
+ (5, 10)" fillcolor=orange]
+	140055046873920 [label="SoftmaxBackward0
+----------------------------
+dim   : 18446744073709551615
+result:       [saved tensor]
+self  :       [saved tensor]"]
+	140055046873680 -> 140055046873920
+	140055046873680 -> 140055046505072 [dir=none]
+	140055046505072 [label="other
+ ()" fillcolor=orange]
+	140055046873680 [label="DivBackward0
+---------------------
+other: [saved tensor]
+self :           None"]
+	140055049879456 -> 140055046873680
+	140055049879456 [label="AddBackward0
+------------
+alpha: 1"]
+	140055049878688 -> 140055049879456
+	140055049878688 -> 140055046466752 [dir=none]
+	140055046466752 [label="mat1
+ (5, 1)" fillcolor=orange]
+	140055049878688 [label="AddmmBackward0
+----------------------------
+alpha       :              1
+beta        :              1
+mat1        : [saved tensor]
+mat1_sizes  :         (5, 1)
+mat1_strides:             ()
+mat2        :           None
+mat2_sizes  :        (1, 10)
+mat2_strides:         (1, 1)"]
+	140055045995536 -> 140055049878688
+	140055046820544 [label="linear.bias
+ (10)" fillcolor=lightblue]
+	140055046820544 -> 140055045995536
+	140055045995536 [label=AccumulateGrad]
+	140055048083248 -> 140055049878688
+	140055048083248 [label=TBackward0]
+	140055045995392 -> 140055048083248
+	140055046820304 [label="linear.weight
+ (10, 1)" fillcolor=lightblue]
+	140055046820304 -> 140055045995392
+	140055045995392 [label=AccumulateGrad]
+	140055046877136 -> 140055046874064
+	140055046877136 [label="ReshapeAliasBackward0
+---------------------
+self_sizes: (5, 10)"]
+	140055046873440 -> 140055046877136
+	140055046873440 -> 140055046169760 [dir=none]
+	140055046169760 [label="mat2
+ (10, 10)" fillcolor=orange]
+	140055046873440 [label="MmBackward0
+----------------------------
+mat2        : [saved tensor]
+mat2_sizes  :       (10, 10)
+mat2_strides:             ()
+self        :           None
+self_sizes  :        (5, 10)
+self_strides:        (10, 1)"]
+	140055049878784 -> 140055046873440
+	140055049878784 -> 140055046506112 [dir=none]
+	140055046506112 [label="result
+ (5, 10)" fillcolor=orange]
+	140055049878784 -> 140055046505472 [dir=none]
+	140055046505472 [label="self
+ (5, 10)" fillcolor=orange]
+	140055049878784 [label="SoftmaxBackward0
+----------------------------
+dim   : 18446744073709551615
+result:       [saved tensor]
+self  :       [saved tensor]"]
+	140055049879120 -> 140055049878784
+	140055049879120 -> 140055046505312 [dir=none]
+	140055046505312 [label="other
+ ()" fillcolor=orange]
+	140055049879120 [label="DivBackward0
+---------------------
+other: [saved tensor]
+self :           None"]
+	140055049475600 -> 140055049879120
+	140055049475600 [label="AddBackward0
+------------
+alpha: 1"]
+	140055049878496 -> 140055049475600
+	140055049878496 -> 140055046466272 [dir=none]
+	140055046466272 [label="mat1
+ (5, 1)" fillcolor=orange]
+	140055049878496 [label="AddmmBackward0
+----------------------------
+alpha       :              1
+beta        :              1
+mat1        : [saved tensor]
+mat1_sizes  :         (5, 1)
+mat1_strides:             ()
+mat2        :           None
+mat2_sizes  :        (1, 10)
+mat2_strides:         (1, 1)"]
+	140055045995536 -> 140055049878496
+	140055047573168 -> 140055049878496
+	140055047573168 [label=TBackward0]
+	140055045995392 -> 140055047573168
+	140055046876464 -> 140055046874352
+	140055046876464 [label=TBackward0]
+	140055045993520 -> 140055046876464
+	140055046170880 [label="
+ (1, 50)" fillcolor=lightblue]
+	140055046170880 -> 140055045993520
+	140055045993520 [label=AccumulateGrad]
+	140055046874352 -> 140055046506192
+}
