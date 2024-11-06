@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import copy
+from sklearn import preprocessing
 
 #editable variables
 GT_SIZE = 10000 #ground truth = GT
@@ -35,7 +36,6 @@ def force_sample_from_df(df,GT_size, BIAS_size,target_var_diff):
     target_min = df.iloc[:,-1].min()
     target_max = df.iloc[:,-1].max()
     target_diff_value = (target_max - target_min) * target_var_diff
-    print(target_diff_value)
     #start with initial sample
     indexes = np.random.randint(low=0,high=df.shape[0],size=BIAS_size)
     cur_bias = copy.deepcopy(df.iloc[indexes,:])
@@ -47,7 +47,6 @@ def force_sample_from_df(df,GT_size, BIAS_size,target_var_diff):
 
     cur_diff = np.abs(cur_bias.iloc[:,-1].mean() - cur_gt.iloc[:,-1].mean())
     while cur_diff < target_diff_value:
-        print(cur_diff)
         indexes = np.random.randint(low=0,high=df.shape[0],size=BIAS_size)
         new_bias = copy.deepcopy(df.iloc[indexes,:])
         indexes = np.random.randint(low=0,high=df.shape[0],size=GT_size)
@@ -80,6 +79,15 @@ def force_sample_from_df(df,GT_size, BIAS_size,target_var_diff):
 
 
 def normalize_df(df):
+    to_del = []
+    for i in range(df.shape[1]):
+        try:
+            df.iloc[:,i].astype(float)
+        except:
+            assert i != df.shape[1]-1, "Error, last column is not float"
+            to_del.append(i)
+    df.drop(df.columns[to_del],axis=1,inplace=True)
+
     df_normalized = (df - df.min()) / (df.max() - df.min())
     columns_with_NaN = list(df_normalized.isna().any())
     return df_normalized, columns_with_NaN
@@ -95,10 +103,18 @@ def clean_NaN(df, NaN_list):
             NaN_column_indexes.append(i)
     df.drop(df.columns[NaN_column_indexes],axis=1,inplace=True)
 
+def clean_NaN_target_col(df):
+    '''
+    drops any rows with NaN in the last column (assumed target variable)
+    '''
+    df = df[df[df.columns[-1]].notna()]
+    return df
+
 if __name__ == "__main__":
     #load and immediately purge any columns with NaN entries
     print("Loading and cleaning original CSV file...",end='')
     df = pd.read_csv("./data/cleanedCensusData.csv")
+    df = clean_NaN_target_col(df)
     columns_with_NaN = list(df.isna().any())
     clean_NaN(df, columns_with_NaN)
     print("Done")
