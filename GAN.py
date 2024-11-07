@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import random
-from Generator import DataGenerator, Generator, generator_noNN
+from Generator import onesGen, dataGen, weightsGen
 from Discriminator import Discriminator
 from util import dict2vector
 from tqdm import tqdm
@@ -30,21 +30,25 @@ class GAN():
         self.temperature = temperature
         self.generator_type = generator_type
         if generator_type == 'onesGen':
-            self.generator = DataGenerator(layers=gen_layers,
+            self.generator = onesGen(layers=gen_layers,
                                         sample_size=bias_sample_size,
                                         batch_size = 1,
                                         temperature=self.temperature,
                                         output_size = len(dataset.biased_dataset),
                                         device=self.device)
         elif generator_type == 'dataGen':
-            self.generator = Generator(num_features=dataset.biased_dataset.shape[1],
+            self.generator = dataGen(num_features=dataset.biased_dataset.shape[1],
                                         sample_size=bias_sample_size,
                                         temperature=temperature).to(self.device)
+            print(self.generator)
         elif generator_type == 'weightsGen':
-            self.generator = generator_noNN(dataset.biased_dataset.shape[0],
+            self.generator = weightsGen(dataset.biased_dataset.shape[0],
                                             bias_sample_size,).to(self.device)
         else:
             raise NotImplementedError
+        print(generator_type)
+        print(self.generator.model)
+        assert 1 == 0
         self.discriminator = Discriminator(dataset.biased_dataset.shape[1]).to(self.device)
         self.loss_function = nn.BCEWithLogitsLoss()
         self.generator_optimizer = torch.optim.Adam(self.generator.parameters(), 

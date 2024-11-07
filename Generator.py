@@ -3,7 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class DataGenerator(torch.nn.Module):
+class onesGen(torch.nn.Module):
+    '''
+    Lowest performer by far, no longer using 
+    '''
     def __init__(self,
                  layers,
                  sample_size,
@@ -34,7 +37,6 @@ class DataGenerator(torch.nn.Module):
         self.batch_size=batch_size
         self.sample_size=sample_size
         self.temperature = temperature
-        
 
     def forward(self,tensor_dataset):
         '''
@@ -85,7 +87,7 @@ class DataGenerator(torch.nn.Module):
             softmaxed = torch.nn.functional.softmax(logits,dim=1)
         return softmaxed.cpu().numpy()
 
-class Generator(nn.Module):
+class dataGen(nn.Module):
     def __init__(self,
                  num_features,
                  sample_size,
@@ -111,7 +113,7 @@ class Generator(nn.Module):
             output = nn.Softmax(dim=1)(logit)
         return output.cpu().numpy()
 
-class generator_noNN(torch.nn.Module):
+class weightsGen(torch.nn.Module):
     def __init__(self,num_data_points,sample_size,):
         super().__init__()
         self.sample_size=sample_size
