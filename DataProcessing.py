@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import copy
 from sklearn import preprocessing
+import itertools
 
 #editable variables
 GT_SIZE = 10000 #ground truth = GT
@@ -92,7 +93,7 @@ def normalize_df(df):
     columns_with_NaN = list(df_normalized.isna().any())
     return df_normalized, columns_with_NaN
 
-def clean_NaN(df, NaN_list):
+def clean_NaN_by_col_index(df, NaN_list):
     '''
     drops the column in place for each df
     NaN_list - list[bool] - element k is true if column column k in df has NaN
@@ -101,7 +102,16 @@ def clean_NaN(df, NaN_list):
     for i in range(len(NaN_list)):
         if NaN_list[i] is True:
             NaN_column_indexes.append(i)
-    df.drop(df.columns[NaN_column_indexes],axis=1,inplace=True)
+    if len(NaN_column_indexes) > 0:
+        df.drop(df.columns[NaN_column_indexes],axis=1,inplace=True)
+
+def clean_NaN_by_col_name(df, NaN_list):
+    '''
+    drops the column in place for each df
+    NaN_list - list[bool] - element k is true if column column k in df has NaN
+    '''
+    df.drop(df[NaN_list],axis=1,inplace=True)
+
 
 def clean_NaN_target_col(df):
     '''
@@ -109,6 +119,76 @@ def clean_NaN_target_col(df):
     '''
     df = df[df[df.columns[-1]].notna()]
     return df
+
+def XBOX_get_GT_and_bias_ratios():
+    #GT statistics
+    #1 = male, 2 = female
+    GT_sex = {1:0.48, 2:0.52}
+    #age group index, 1:(18,29), 2:(30,44), 3:(45,64), 4:(65+)
+    GT_age = {1:0.2,2:0.3,3:0.4,4:0.1}
+    #race mapping 1:white, 2:black, everything else
+    GT_race = {1:0.75, 2:0.1, 3:0.15}
+    #< HS: 0-5, HS: 6, some_college: 7-9, finished college, 10-11
+    GT_education = {1: 0.05, 2:0.15, 3: 0.3, 4: 0.5}
+
+    global_GT_var_order = ['SEX', 'AGE', 'RACE', 'EDUC']
+    global_GT_dict = []
+    global_GT_dict.append(GT_sex)
+    global_GT_dict.append(GT_age)
+    global_GT_dict.append(GT_race)
+    global_GT_dict.append(GT_education)
+
+    #biased statistics
+    global_bias_var_order = ['SEX', 'AGE', 'RACE', 'EDUC']
+    bias_sex = {1:0.9, 2:0.1} #1 = male, 2 = female
+    bias_age = {1:0.6,2:0.25,3:0.1,4:0.05}
+    bias_race = {1:0.75, 2:0.1, 3:0.15}
+    bias_education = {1: 0.05, 2:0.25, 3: 0.45, 4: 0.25}
+
+    global_bias_dict = []
+    global_bias_dict.append(bias_sex)
+    global_bias_dict.append(bias_age)
+    global_bias_dict.append(bias_race)
+    global_bias_dict.append(bias_education)
+
+    return global_GT_dict, global_GT_var_order,global_bias_dict,global_bias_var_order  
+
+def get_all_persons_types_count(size,global_dict):
+    '''
+    takes a cartesian product of all keys in global_dict
+
+
+    '''
+    all_keys = [list(d.keys()) for d in global_dict]
+
+    # Compute the Cartesian product of keys from all dictionaries
+    cartesian_keys = list(itertools.product(*all_keys))
+
+    # Create a new dictionary with the Cartesian product keys
+    all_person_types_count = {key: None for key in cartesian_keys}
+
+    for product_key in all_person_types_count:
+        indpendent_joint_prob = 1
+        for var_i, var_val in enumerate(product_key):
+            indpendent_joint_prob *= global_dict[var_i][var_val]
+        all_person_types_count[product_key] = indpendent_joint_prob*size
+
+    all_person_types_count = {k:round(x) for k, x in all_person_types_count.items()}
+    return all_person_types_count
+
+def XBOX_get_sampled_df(var_order,all_person_types_count, df):
+    #filter df by each specific type
+    all_persons_dfs = []
+    for person_type in all_person_types_count:
+        condition = True
+        for var_index, var_value in enumerate(person_type):
+            condition = (condition & (df[var_order[var_index]] == var_value))
+        
+        conditional_df = df[condition]
+        num_samples_needed = all_person_types_count[person_type]
+        all_persons_dfs.append(conditional_df.sample(n=num_samples_needed))
+    sampled_df = pd.concat(all_persons_dfs)
+    return sampled_df
 
 if __name__ == "__main__":
     #load and immediately purge any columns with NaN entries

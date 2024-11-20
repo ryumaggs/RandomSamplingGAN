@@ -90,16 +90,32 @@ class onesGen(torch.nn.Module):
 class dataGen(nn.Module):
     def __init__(self,
                  num_features,
+                 layers,
                  sample_size,
                  temperature):
         super().__init__()
-        self.linear = nn.Linear(num_features, 1)
+        dropout = 0.1
+        #self.linear = nn.Linear(num_features, 1)
+        modules = []
+        if layers is None:
+            modules.append(nn.Linear(num_features, 1))
+        else:
+            modules.append(nn.Linear(num_features,layers[0]))
+            modules.append(nn.Dropout(dropout))
+            modules.append(nn.LeakyReLU())
+            for i,l in enumerate(layers):
+                if i == 0:
+                    continue
+                modules.append(nn.Linear(layers[i-1],l))
+                modules.append(nn.Dropout(dropout))
+                modules.append(nn.LeakyReLU())
+            modules.append(nn.Linear(layers[-1],1))
+        self.model = nn.Sequential(*modules)
         self.sample_size = sample_size
         self.temperature=temperature
 
     def forward(self, dataset):
-        logits = None
-        logits = self.linear(dataset).T
+        logits = self.model(dataset).T
         logits = logits.repeat((self.sample_size,1))
         matrix = F.gumbel_softmax(logits, tau=self.temperature, hard=False) # give index
         output = torch.matmul(matrix, dataset)
@@ -109,7 +125,7 @@ class dataGen(nn.Module):
 
     def get_weights(self, dataset):
         with torch.no_grad():
-            logit = self.linear(dataset).transpose(0,1)
+            logit = self.model(dataset).transpose(0,1)
             output = nn.Softmax(dim=1)(logit)
         return output.cpu().numpy()
 

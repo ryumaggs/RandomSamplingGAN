@@ -6,6 +6,71 @@ from scipy.special import softmax
 import pandas as pd
 import torch
 from util import dict2vector
+from DataProcessing import *
+
+class XBoxDatasetSimulation():
+    def __init__(self,
+                 dataset_path=None,
+                 device=None,):
+        self.type = "real"
+        self.device = device
+        self.df = self.load_csv(dataset_path)
+
+        #logic to split the df
+    
+    def clean_AGE(self, df):
+        #PUTS AGE INTO BINS TO MIMIC XBOX
+        #bins = [(18,(30,44):2,(45,64):3,(65,200):4]
+        bins = [18,30,45,65,200]
+        # Let us create our labels:
+        labels = [1, 2, 3, 4]
+        # Finally, we add a new column to the df:
+        df['AGE'] = pd.cut(df['AGE'], bins=bins, labels=labels)
+        df.dropna(inplace=True) #drops any samples with ages outside range
+        df['AGE'] = df['AGE'].astype(int)
+
+    def clean_RACE(self, df):
+        #PUTS RACE INTO BINS TO MIMIC XBOX
+        #bins = [(18,(30,44):2,(45,64):3,(65,200):4]
+        bins = [1,2,3,20]
+        # Let us create our labels:
+        labels = [1,2,3]
+        # Finally, we add a new column to the df:
+        df['RACE'] = pd.cut(df['RACE'], bins=bins, labels=labels)
+        df.dropna(inplace=True) #drops any samples with ages outside range
+        df['RACE'] = df['RACE'].astype(int)
+
+    def clean_EDUC(self, df):
+        #< HS: 0-5, HS: 6, some_college: 7-9, finished college, 10-11
+        #GT_education = {'< HS': 0.05, 'HS':0.15, 'Some college': 0.3, 'finished college': 0.5}
+
+        #PUTS RACE INTO BINS TO MIMIC XBOX
+        #bins = [(18,(30,44):2,(45,64):3,(65,200):4]
+        bins = [0,6,7,10,30]
+        # Let us create our labels:
+        labels = [1,2,3,4]
+        # Finally, we add a new column to the df:
+        df['EDUC'] = pd.cut(df['EDUC'], bins=bins, labels=labels)
+        df.dropna(inplace=True) #drops any samples with ages outside range
+        df['EDUC'] = df['EDUC'].astype(int)
+
+    def load_csv(self, ground_truth_path):
+        try:
+            df = pd.read_csv(ground_truth_path)
+            df = clean_NaN_target_col(df)
+            NaN_cols_list = df.columns[df.isna().any()].tolist()
+            clean_NaN_by_col_name(df, NaN_cols_list)
+        except Exception as e:
+            print(e)
+            print('error occured')
+            exit(1)
+        print(df.shape)
+        self.clean_AGE(df)
+        self.clean_RACE(df)
+        self.clean_EDUC(df)
+        print(df.shape)
+        return df
+
 
 class RealPredictionDataset():
     def __init__(self,

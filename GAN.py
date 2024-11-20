@@ -6,16 +6,19 @@ from Generator import onesGen, dataGen, weightsGen
 from Discriminator import Discriminator
 from util import dict2vector
 from tqdm import tqdm
+import pytorch_warmup as warmup
 
 class GAN():
     def __init__(self,
                  dataset,
                  generator_type,
-                learning_rate,
+                gen_learning_rate,
+                disc_learning_rate,
                 truth_sample_size,
                 gen_layers,
                 bias_sample_size,
                 temperature=0.1,
+                warmup_length = 1000,
                 device=torch.device('cuda:0'),
                 ):
 
@@ -38,24 +41,24 @@ class GAN():
                                         device=self.device)
         elif generator_type == 'dataGen':
             self.generator = dataGen(num_features=dataset.biased_dataset.shape[1],
-                                        sample_size=bias_sample_size,
-                                        temperature=temperature).to(self.device)
-            print(self.generator)
+                                     layers=gen_layers,
+                                     sample_size=bias_sample_size,
+                                     temperature=temperature).to(self.device)
         elif generator_type == 'weightsGen':
             self.generator = weightsGen(dataset.biased_dataset.shape[0],
                                             bias_sample_size,).to(self.device)
         else:
             raise NotImplementedError
-        print(generator_type)
-        print(self.generator.model)
-        assert 1 == 0
         self.discriminator = Discriminator(dataset.biased_dataset.shape[1]).to(self.device)
         self.loss_function = nn.BCEWithLogitsLoss()
         self.generator_optimizer = torch.optim.Adam(self.generator.parameters(), 
-                                                    lr=learning_rate,
+                                                    lr=gen_learning_rate,
                                                     weight_decay=0)
+        self.generator_lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.generator_optimizer, gamma=1)
+        self.generator_warmup_scheduler = warmup.LinearWarmup(self.generator_optimizer, warmup_length)
+
         self.discriminator_optimizer = torch.optim.Adam(self.discriminator.parameters(),
-                                                        lr=learning_rate,
+                                                        lr=disc_learning_rate,
                                                         weight_decay=0)
         self.ground_truth_dataset = dataset.ground_truth_dataset
         self.bias_dataset = dataset.biased_dataset
@@ -80,6 +83,11 @@ class GAN():
         self.generator_optimizer.zero_grad()
         generator_loss.backward()
         self.generator_optimizer.step()
+
+        #warmup code
+        with self.generator_warmup_scheduler.dampening():
+            self.generator_lr_scheduler.step()
+
         return generator_loss.item()
 
     def train_discriminator(self):
