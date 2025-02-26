@@ -101,18 +101,30 @@ class dataGen(nn.Module):
             modules.append(nn.Linear(num_features, 1))
         else:
             modules.append(nn.Linear(num_features,layers[0]))
-            modules.append(nn.Dropout(dropout))
+    
             modules.append(nn.LeakyReLU())
+            modules.append(nn.Dropout(dropout))
             for i,l in enumerate(layers):
                 if i == 0:
                     continue
                 modules.append(nn.Linear(layers[i-1],l))
-                modules.append(nn.Dropout(dropout))
                 modules.append(nn.LeakyReLU())
+                modules.append(nn.Dropout(dropout))
             modules.append(nn.Linear(layers[-1],1))
         self.model = nn.Sequential(*modules)
         self.sample_size = sample_size
         self.temperature=temperature
+
+    def apply_he_init_to_sequential(self,model):
+        for layer_id, layer in enumerate(model):
+            #initialize all intermediary layers using relu non linearity
+            if isinstance(layer, torch.nn.Linear):
+                if isinstance(model[layer_id+1],torch.nn.LeakyReLU):  # Apply He initialization to Linear layers
+                    torch.nn.init.kaiming_uniform_(layer.weight, mode='fan_out', nonlinearity='leaky_relu')  # or kaiming_uniform_
+                elif isinstance(model[layer_id+1],torch.nn.Identity):
+                    torch.nn.init.xavier_uniform_(layer.weight) 
+                if layer.bias is not None:
+                    torch.nn.init.zeros_(layer.bias)  # Initialize biases to 0
 
     def forward(self, dataset):
         logits = self.model(dataset).T
@@ -129,6 +141,11 @@ class dataGen(nn.Module):
             output = nn.Softmax(dim=1)(logit)
         return output.cpu().numpy()
 
+    def get_weights_regularizer(self, dataset):
+        logit = self.model(dataset).transpose(0,1)
+        output = nn.Softmax(dim=1)(logit)
+        return output
+    
 class weightsGen(torch.nn.Module):
     def __init__(self,num_data_points,sample_size,):
         super().__init__()

@@ -19,6 +19,7 @@ class GAN():
                 bias_sample_size,
                 temperature=0.1,
                 warmup_length = 1000,
+                lambda_regularizer = 0,
                 device=torch.device('cuda:0'),
                 ):
 
@@ -66,7 +67,9 @@ class GAN():
         self.truth_sample_size = truth_sample_size    
         self.data_type = dataset.type
 
-        self.biased_labels = dataset.biased_labels   
+        self.lambda_regularizer = lambda_regularizer
+        self.biased_labels = dataset.biased_labels  
+        self.ground_truth_demographics = dataset.ground_truth_demographics 
 
     def set_temperature(self, new_temp):
         self.temperature = new_temp
@@ -75,11 +78,20 @@ class GAN():
         index = np.random.choice(np.arange(len(self.ground_truth_dataset)),size=self.truth_sample_size)
         return self.ground_truth_dataset[index]
 
+    def get_reg_loss(self):
+        weights = self.generator.get_weights_regularizer(self.bias_dataset)
+        return torch.square(torch.norm(input=weights,p=2))
+    
     def train_generator(self):
         #bias_data, _ = self.generator(self.bias_dataset,self.temperature)
         selected_data, _ = self.generator.forward(self.bias_dataset)
         bias_label = self.discriminator(selected_data.to(self.device))
-        generator_loss = self.loss_function(bias_label, torch.ones_like(bias_label).to(self.device))
+        data_loss = self.loss_function(bias_label, torch.ones_like(bias_label).to(self.device))
+        
+        #get regularizer loss here for the sum of the squared weights
+        regularizer_loss = self.get_reg_loss()
+        generator_loss = data_loss + self.lambda_regularizer * regularizer_loss
+
         self.generator_optimizer.zero_grad()
         generator_loss.backward()
         self.generator_optimizer.step()
@@ -88,7 +100,7 @@ class GAN():
         with self.generator_warmup_scheduler.dampening():
             self.generator_lr_scheduler.step()
 
-        return generator_loss.item()
+        return generator_loss.item(), regularizer_loss.item()
 
     def train_discriminator(self):
 
@@ -118,11 +130,13 @@ class GAN():
 
         generator_losses = []
         discriminator_losses = []
+        regularizer_losses = []
         truth_losses = []
         bias_losses = []
         for _ in range(generator_training_factor):
-            generator_loss = self.train_generator()
+            generator_loss, regularizer_loss = self.train_generator()
             generator_losses.append(generator_loss)
+            regularizer_losses.append(regularizer_loss)
 
         for _ in range(discriminator_training_factor):
             discriminator_loss, truth_loss, bias_loss = self.train_discriminator()
@@ -130,20 +144,32 @@ class GAN():
             truth_losses.append(truth_loss)
             bias_losses.append(bias_loss)
 
-        return generator_losses, discriminator_losses, truth_losses, bias_losses
+        return generator_losses, discriminator_losses, truth_losses, bias_losses, regularizer_losses
 
     def measure_correctness(self):
         l2_diff = None
+        demographic_diff = 0
         if self.data_type == "real":
-            test = self.generator.get_weights(self.bias_dataset)
-            test2 = (test @ self.biased_labels.cpu().numpy()).item()
-            l2_diff = np.abs(self.ground_truth - test2)
+            weights = self.generator.get_weights(self.bias_dataset)
+            predicted_target = (weights @ self.biased_labels.cpu().numpy()).item()
+            l2_diff = np.abs(self.ground_truth - predicted_target)
+
+            #get demographic difference here
+            #self.ground_truth_demographics
+            recovered_demographics = (weights @ self.bias_dataset.cpu().numpy()).flatten()
+            demographic_diff = np.linalg.norm(recovered_demographics - self.ground_truth_demographics)
         elif self.data_type == "importance":
             l2_diff = np.linalg.norm(self.generator.get_weights(self.bias_dataset)-self.ground_truth)
+            demographic_diff = 0
         else:
             raise NotImplementedError
-        return l2_diff
+        return l2_diff, demographic_diff
     
+    def measure_vaccine(self):
+        weights = self.generator.get_weights(self.bias_dataset)
+        predicted_target = (weights @ self.biased_labels)
+        return predicted_target
+
     def train(self,
               batchs_in_epoch,
               epochs,
@@ -152,20 +178,23 @@ class GAN():
               gen_training_factor,
               disc_training_factor,
               writer,):
-        clusters, probs, prob_diffs = [], [], []
+        prob_diffs = []
         generator_losses, discriminator_losses = [], []
         test_probs = []
         test_prob_diffs = []
         for epoch in tqdm(range(epochs)):
             #TEMPERATURE = temperature_end + (temperature_start - temperature_end) * np.exp(-epoch/epochs)
-            generator_losses_1ep, discriminator_loss_1ep, truth_losses, bias_losses = self.onestep_train(generator_training_factor=gen_training_factor, discriminator_training_factor=disc_training_factor)
+            generator_losses_1ep, discriminator_loss_1ep, truth_losses, bias_losses, regularizer_losses = self.onestep_train(generator_training_factor=gen_training_factor, discriminator_training_factor=disc_training_factor)
             
-            l2_diff = self.measure_correctness()
-            test_probs.append(l2_diff)
+            pred = self.measure_vaccine()
+            #test_probs.append(l2_diff)
             writer.add_scalar('GenLoss', sum(generator_losses_1ep)/len(generator_losses_1ep), epoch)
             writer.add_scalar('Disc Truth loss', sum(truth_losses)/len(truth_losses), epoch)
             writer.add_scalar('Disc Bias loss', sum(bias_losses)/len(bias_losses), epoch)
-            writer.add_scalar('L2 Diff Norm', l2_diff,epoch)
+            #writer.add_scalar('L2 Diff Norm', l2_diff,epoch)
+            #writer.add_scalar('Demographic diff', demographic_diff, epoch)
+            writer.add_scalar('Vaccine prediction', pred, epoch)
+            writer.add_scalar('regularizer losses', sum(regularizer_losses)/len(regularizer_losses),epoch)
 
             if False and epoch % 100 == 0:
                 print("")
@@ -173,4 +202,5 @@ class GAN():
                 print(l2_diff)
                 print(self.generator.get_weights(self.bias_dataset))
                 print(self.ground_truth)
-        return clusters, probs, prob_diffs, test_probs, test_prob_diffs, generator_losses, discriminator_losses
+        weights = self.generator.get_weights(self.bias_dataset)
+        return weights, self.biased_labels, prob_diffs, test_probs, test_prob_diffs, generator_losses, discriminator_losses

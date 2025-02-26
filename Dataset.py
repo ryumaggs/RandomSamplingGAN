@@ -7,6 +7,7 @@ import pandas as pd
 import torch
 from util import dict2vector
 from DataProcessing import *
+from sklearn.preprocessing import StandardScaler
 
 class XBoxDatasetSimulation():
     def __init__(self,
@@ -71,7 +72,42 @@ class XBoxDatasetSimulation():
         print(df.shape)
         return df
 
+class Axios_ipsosdataset():
+    def __init__(self,
+                 ground_truth_path,
+                 bias_path,
+                 device=None,
+                 gt_limit = 5000,):
+        self.type = 'real'
+        self.device = device
+        self.gt_limit = gt_limit
+        self.biased_dataset = self.load_csv(bias_path).to_numpy(dtype=np.float, na_value=0)
+        raw_gt_load = self.load_csv(ground_truth_path)
+        self.biased_labels = self.biased_dataset[:,-1]
+        self.scaler = StandardScaler()
+        self.ground_truth_dataset = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT']).to_numpy(dtype=np.float, na_value=0)
+        del raw_gt_load
+        self.scaler = self.scaler.fit(self.ground_truth_dataset[:self.gt_limit,1:])
+        self.ground_truth_dataset = self.scaler.transform(self.ground_truth_dataset[:self.gt_limit,1:])
+        self.biased_dataset = self.scaler.transform(self.biased_dataset[:,1:-1])
 
+        self.ground_truth = None
+        self.ground_truth_demographics = None
+        #bias has axios weights in column 0 and vaccinated status in column -1
+        #gt has census weights in column 0
+        self.ground_truth_dataset = torch.tensor(self.ground_truth_dataset,device=self.device,dtype=torch.float32)
+        self.biased_dataset = torch.tensor(self.biased_dataset,device=self.device,dtype=torch.float32)
+        
+
+    def load_csv(self, ground_truth_path):
+        try:
+            df = pd.read_csv(ground_truth_path)
+        except Exception as e:
+            print(e)
+            print('error occured')
+            exit(1)
+        
+        return df
 class RealPredictionDataset():
     def __init__(self,
                  ground_truth_path,
@@ -89,6 +125,8 @@ class RealPredictionDataset():
         self.biased_labels = self.biased_dataset[:,-1]
         self.biased_dataset = self.biased_dataset[:,:-1]
         
+        self.ground_truth_demographics = torch.mean(self.ground_truth_dataset,dim=0).cpu().numpy()
+    
     def load_csv(self, ground_truth_path):
         try:
             df = pd.read_csv(ground_truth_path)
