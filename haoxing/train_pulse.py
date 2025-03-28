@@ -19,15 +19,16 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 
 # For learning
 BATCHS_IN_EPOCH = 10
-BIAS_BATCH_SIZE = 1000
-TRUTH_BATCH_SIZE = 1000
-EPOCHS = 500  # the stream is infinite so one epoch will be defined as BATCHS_IN_EPOCH * BATCH_SIZE
-GENERATOR_TRAINING_FACTOR = 1
+BIAS_BATCH_SIZE = 100
+TRUTH_BATCH_SIZE = 100
+EPOCHS = 100  # the stream is infinite so one epoch will be defined as BATCHS_IN_EPOCH * BATCH_SIZE
+GENERATOR_TRAINING_FACTOR = 20
 DISCRIMINATOR_TRAINING_FACTOR = 1
 LEARNING_RATE = 1e-5
 TEMPERATURE_START = 0.1
 TEMPERATURE_END = 0.1
-TEMPERATURE = 0.1
+TEMPERATURE = 0.01
+LOSS_TYPE = "Wasserstein"
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 pulse_path = ["dataset/pulse_dataset/cleaned/week26/week26.csv"] 
 #                "dataset/pulse_dataset/cleaned/week23/week23.csv"]
@@ -50,15 +51,32 @@ for path in pulse_path:
     #print = lambda *args, **kwargs: None
 
     dataset = PulseDataset(path, ipums_path)
-    gan = GAN(dataset, LEARNING_RATE, TRUTH_BATCH_SIZE, BIAS_BATCH_SIZE, TEMPERATURE, EPOCHS, BATCHS_IN_EPOCH, GENERATOR_TRAINING_FACTOR, DISCRIMINATOR_TRAINING_FACTOR, device)
-    generator_losses, discriminator_losses, predicts = gan.train()
+    gan = GAN(dataset, LEARNING_RATE, TRUTH_BATCH_SIZE, BIAS_BATCH_SIZE, TEMPERATURE, EPOCHS, BATCHS_IN_EPOCH, GENERATOR_TRAINING_FACTOR, DISCRIMINATOR_TRAINING_FACTOR, LOSS_TYPE, device)
+    info, debug_info = gan.train()
 
     save_data(logger, "learning_rate", LEARNING_RATE)
+    save_data(logger, "temperature", TEMPERATURE)
     save_data(logger, "total_iterations", BATCHS_IN_EPOCH * EPOCHS)
     save_data(logger, "training_frequency", (GENERATOR_TRAINING_FACTOR, DISCRIMINATOR_TRAINING_FACTOR))
-    save_data(logger, "generator_losses", generator_losses)
-    save_data(logger, "discriminator_losses", discriminator_losses)
-    save_data(logger, "predicts", predicts)
+    save_data(logger, "generator_losses", info["generator loss"])
+    save_data(logger, "discriminator_losses", info["discriminator loss"])
+    save_data(logger, "hard predicts", info["hard predict"])
+    save_data(logger, "soft predicts", info["soft predict"])
+    save_data(logger, "generator weights", debug_info["generator weights"])
+    save_data(logger, "generator increment", debug_info["generator increment"])
+    save_data(logger, "discriminator weights", debug_info["discriminator weights"])
+    save_data(logger, "discriminator increment", debug_info["discriminator increment"])
+
+    g_prop = []
+    d_prop = []
+    for ind, val in enumerate(info["generator loss"]):
+        if ind != 0:
+            g_prop.append(abs(val-info["generator loss"][ind-1])/info["generator loss"][ind-1])
+    for ind, val in enumerate(info["discriminator loss"]):
+        if ind != 0:
+            d_prop.append(abs(val-info["discriminator loss"][ind-1])/info["discriminator loss"][ind-1])
+    save_data(logger, "generator rate", g_prop)
+    save_data(logger, "discriminator rate", d_prop)
 
     # Re-enable print
     #print = enable_print
