@@ -39,7 +39,75 @@ def mlp(
 def to_onehot(y, num_classes=5):
     return np.eye(num_classes)[y].reshape(-1, num_classes)
 
-def set_seed(seed):
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    random.seed(seed)
+def set_seed_old(seed, device):
+    print('SETTING SEED: ', seed)
+    rngs = {}
+    torch_rng = torch.Generator()
+    torch_rng.manual_seed(seed)
+    rngs['torch'] = torch_rng
+    torch_cuda_rng = torch.Generator(device=device)
+    torch_cuda_rng.manual_seed(seed)
+    rngs['torch_cuda'] = torch_cuda_rng
+    python_rng = random.Random(seed)
+    rngs['python'] = python_rng
+    np_rng = np.random.default_rng(seed)
+    rngs['np'] = np_rng
+    rngs['seed'] = seed
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    return rngs
+
+def set_seed(seed,
+             device,
+              data_init=[True, True],
+              data_gen =True,
+              network_init=True,):
+    rngs = {}
+    #torch_cuda_rng = torch.Generator(device=device)
+    #torch_cuda_rng.manual_seed(seed)
+    #rngs['torch_cuda'] = torch_cuda_rng
+    #python_rng = random.Random(seed)
+    #rngs['python'] = python_rng
+
+    #this generator is only used in the initial network initializations:
+    if network_init:
+        torch_rng = torch.Generator()
+        torch_rng.manual_seed(seed)
+        rngs['torch'] = torch_rng
+    else:
+        torch_rng = torch.Generator()
+        torch_rng.manual_seed(np.random.randint(1e6))
+        rngs['torch'] = torch_rng
+        
+
+    #these generators is only used when sampling GT and Bias samples during training
+    #np_rng picks the GT and Bias data set 
+    #torch_cuda is used by Gumbel softmax as well as Compute_gradient_penalty
+    if data_gen is True:
+        np_rng = np.random.default_rng(seed)
+        rngs['np'] = np_rng
+        cuda_rng = torch.Generator(device=device)
+        cuda_rng.manual_seed(seed)
+        rngs['torch_cuda'] = cuda_rng
+    else:
+        np_rng = np.random.default_rng(np.random.randint(1e6))
+        rngs['np'] = np_rng
+        cuda_rng = torch.Generator(device=device)
+        cuda_rng.manual_seed(np.random.randint(1e6))
+        rngs['torch_cuda'] = cuda_rng
+
+    #this generator is only used when first choosing GT and bias samples for training
+    same_gt = data_init[0]
+    same_bias = data_init[1]
+    if same_gt:
+        rngs['seed_gt'] = seed
+    else:
+        rngs['seed_gt'] = np.random.randint(1e6)
+    if same_bias:
+        rngs['seed_bias'] = seed
+    else:
+        rngs['seed_bias'] = np.random.randint(1e6)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    return rngs

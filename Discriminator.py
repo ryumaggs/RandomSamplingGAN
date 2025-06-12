@@ -41,27 +41,133 @@ class DataDiscriminator(torch.nn.Module):
     
 class Discriminator(nn.Module):
     def __init__(self,
-                 num_features):
-        super(Discriminator, self).__init__()
-        self.num_hidden = 512
-        self.linear1 = nn.Linear(num_features, self.num_hidden)
-        self.dropout1 = nn.Dropout(0.2)
-        self.activation1 = nn.LeakyReLU()
-        self.linear2 = nn.Linear(self.num_hidden, self.num_hidden)
-        self.dropout2 = nn.Dropout(0.2)
-        self.activation2 = nn.LeakyReLU()
-        self.linear3 = nn.Linear(self.num_hidden, 1)
-        self.dropout3 = nn.Dropout(0.2)
-        self.activation3 = nn.LeakyReLU()
+                 seed,
+                 num_features,
+                 dropout,
+                 layers):
+        super().__init__()
+
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+        #self.linear = nn.Linear(num_features, 1)
+        modules = []
+        if layers is None:
+            modules.append(nn.Linear(num_features, 1))
+        else:
+            modules.append(nn.Linear(num_features,layers[0]))
+            modules.append(nn.LayerNorm(layers[0]))
+            modules.append(nn.LeakyReLU(0.2))
+            modules.append(nn.Dropout(dropout))
+            for i,l in enumerate(layers):
+                if i == 0:
+                    continue
+                modules.append(nn.Linear(layers[i-1],l))
+                modules.append(nn.LayerNorm(l))
+                modules.append(nn.LeakyReLU(0.2))
+                modules.append(nn.Dropout(dropout))
+            modules.append(nn.Linear(layers[-1],1))
+            modules.append(nn.Identity())
+        self.model = nn.Sequential(*modules)
+        self.apply_he_init_to_sequential(self.model)
+
+    def apply_he_init_to_sequential(self,model):
+        for layer_id, layer in enumerate(model):
+            #initialize all intermediary layers using relu non linearity
+            if isinstance(layer, torch.nn.Linear):
+                if isinstance(model[layer_id+1],torch.nn.LeakyReLU):  # Apply He initialization to Linear layers
+                    torch.nn.init.kaiming_uniform_(layer.weight, mode='fan_out', nonlinearity='leaky_relu')  # or kaiming_uniform_
+                elif isinstance(model[layer_id+1],torch.nn.Identity):
+                    torch.nn.init.xavier_uniform_(layer.weight) 
+                if layer.bias is not None:
+                    torch.nn.init.zeros_(layer.bias)  # Initialize biases to 0
 
     def forward(self, input):
-        output = self.linear1(input)
-        output = self.dropout1(output)
-        #output = self.activation1(output)
-        output = self.linear2(output)
-        output = self.dropout2(output)
-        #utput = self.activation2(output)
-        output = self.linear3(output)
-        output = self.dropout3(output)
-        #utput = self.activation3(output)
+        input = input.reshape(input.shape[0],input.shape[1]*input.shape[2])
+        output = self.model(input)
         return output
+
+class DeepSetCritic(nn.Module):
+    def __init__(self, 
+                 rngs,
+                 num_features,
+                 dropout,
+                 layers,
+                 hidden_dim=1024,):
+        super().__init__()
+
+        '''
+        Commented code for quick testing
+            
+
+            
+        '''
+        self.rngs = rngs
+        self.phi = nn.Sequential(
+            nn.Linear(num_features, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.Identity(),
+            nn.Dropout(dropout),
+        )
+        self.rho = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, 1),  # output one logit per data point
+            nn.Identity()
+        )
+        self.apply_he_init_to_sequential(self.phi)
+        self.apply_he_init_to_sequential(self.rho)
+
+        self.phi.to(torch.device('cuda:0'))
+        self.rho.to(torch.device('cuda:0'))
+
+    def apply_he_init_to_sequential(self,model):
+        for layer_id, layer in enumerate(model):
+            #print(layer_id, layer)
+            #initialize all intermediary layers using relu non linearity
+            if isinstance(layer, torch.nn.Linear):
+                if isinstance(model[layer_id+1],torch.nn.Identity):
+                    torch.nn.init.xavier_uniform_(layer.weight, generator=self.rngs['torch']) 
+                elif isinstance(model[layer_id+2],torch.nn.Identity):
+                    torch.nn.init.xavier_uniform_(layer.weight, generator=self.rngs['torch']) 
+                elif isinstance(model[layer_id+2],torch.nn.LeakyReLU):  # Apply He initialization to Linear layers
+                    torch.nn.init.kaiming_uniform_(layer.weight, mode='fan_out', nonlinearity='leaky_relu', generator=self.rngs['torch'])
+                if layer.bias is not None:
+                    torch.nn.init.zeros_(layer.bias)  # Initialize biases to 0
+            elif isinstance(layer, torch.nn.LayerNorm):
+                if layer.elementwise_affine:
+                    torch.nn.init.uniform_(layer.weight, a=0.0, b=1.0, generator=self.rngs['torch'])  # or any init you prefer
+                    torch.nn.init.zeros_(layer.bias)
+
+    def forward(self, x):  # x: [N, 8]
+        # x: [batch_size, set_size, input_dim]
+        x = self.phi(x)         # [B, 32, H]
+        x = x.sum(dim=1)        # [B, H] — permutation-invariant pooling
+        out = self.rho(x)       # [B, 1]
+        return out
+    
+    def debugging_forward(self, x, labels):  # x: [N, 8]
+        # x: [batch_size, set_size, input_dim]
+        x = self.phi(x)         # [B, 32, H]
+        x = x.mean(dim=1)        # [B, H] — permutation-invariant pooling
+        print(x[labels.squeeze()==0].mean())
+        print(x[labels.squeeze()==1].mean())
+        print("")
+        out = self.rho(x)       # [B, 1]
+        return out
+
+    def set_eval(self):
+        self.phi.eval()
+        self.rho.eval()
+    
+    def set_train(self):
+        self.phi.train()
+        self.rho.train()

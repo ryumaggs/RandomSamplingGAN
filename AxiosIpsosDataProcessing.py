@@ -260,3 +260,6 @@ def recoding_survey_and_census_data(survey_df, census_df):
 
         # Recode the EDUC column in the census data
         census_df['EDUC'] = census_df['EDUC'].map(educ_mapping)
+
+if __name__ == "__main__":
+    

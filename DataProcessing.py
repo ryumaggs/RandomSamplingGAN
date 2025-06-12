@@ -195,8 +195,8 @@ if __name__ == "__main__":
     print("Loading and cleaning original CSV file...",end='')
     df = pd.read_csv("./data/cleanedCensusData.csv")
     df = clean_NaN_target_col(df)
-    columns_with_NaN = list(df.isna().any())
-    clean_NaN(df, columns_with_NaN)
+    #columns_with_NaN = list(df.isna().any())
+    #clean_NaN(df, columns_with_NaN)
     print("Done")
 
     #keep generating bias and gt data set until TARGET_VAR_GAP is reached
