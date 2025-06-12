@@ -18,7 +18,7 @@ import logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(filename='train_log.log', level=logging.INFO)
 
-from Dataset import Axios_ipsosdataset, HouseholdPulse_dataset, D4P_dataset
+from Dataset import Axios_ipsosdataset, HouseholdPulse_dataset, D4P_dataset, HouseholdPulse_synthetic
 from GAN import GAN, WGAN_GP, WGAN_GP_fict
 from Discriminator import DataDiscriminator
 from util import set_seed
@@ -257,7 +257,7 @@ if __name__ == "__main__":
                                     gt_limit = GT_LIMIT,
                                     )'''
                     
-                    d = HouseholdPulse_dataset(ground_truth_path='./data/censusHouseholdPulse_data/ipums_cleaned.csv',
+                    d = HouseholdPulse_synthetic(ground_truth_path='./data/censusHouseholdPulse_data/ipums_cleaned.csv',
                                     bias_path = './data/censusHouseholdPulse_data/pulse_week'+week+'_cleaned.csv',
                                     rngs=rngs,
                                     device=device,
@@ -271,7 +271,7 @@ if __name__ == "__main__":
                     print("idealy 1k to 5k generaor updates...")
                     print("N Generator updates: ", (EPOCHS * GT_LIMIT*len(rngs)) / (BATCH_SIZE * dtrainingfactor))
 
-                    gan = WGAN_GP_fict(
+                    gan = WGAN_GP(
                         history_length=gen_history_length,
                         rngs=rngs,
                         dataset=d,

@@ -636,6 +636,7 @@ class WGAN_GP_fict(WGAN_GP):
     def __init__(self, history_length, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.history_length = history_length
+        print(type(self.generator))
         t_copy = copy.deepcopy(self.generator)
         self.gen_history = [t_copy]
         #self.gen_history[0].eval()

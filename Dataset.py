@@ -164,6 +164,9 @@ class HouseholdPulse_dataset():
         del raw_gt_load
         del raw_bias_load 
         
+        self.var_setup
+    
+    def var_setup(self):
         self.biased_labels = self.biased_dataset[:,0]
         print("uniform avg vaccine: ", sum(self.biased_labels)/len(self.biased_labels))
         self.unscaled_ground_truth = self.ground_truth_dataset[:,1:]
@@ -179,7 +182,7 @@ class HouseholdPulse_dataset():
 
         self.bin_centers = self.compute_bin_centers(self.scaler, 
                                                     self.num_categories_per_features,
-                                                    device=device)
+                                                    device=self.device)
 
         self.unscaled_ground_truth, self.unscaled_biased = self.create_combination_id_mapping(self.unscaled_ground_truth,
                                                                                               self.unscaled_biased)
@@ -216,6 +219,7 @@ class HouseholdPulse_dataset():
             bin_centers.append(torch.tensor(standardized, dtype=torch.float32, device=device))
 
         return bin_centers
+
     def load_data_with_rngs(self, 
                             columns_to_keep,
                             raw_bias_load,
@@ -280,9 +284,77 @@ class HouseholdPulse_dataset():
         
         return df
 
-class CPS_dataset(HouseholdPulse_dataset):
-    def dummy_func():
-        pass
+class HouseholdPulse_synthetic(HouseholdPulse_dataset):
+    def __init__(self,
+                 ground_truth_path,
+                 rngs,
+                 device=None,
+                 columns_to_keep = None,
+                 gt_limit = 5000,
+                 bias_limit = 1000, ):
+        
+        self.type = 'real'
+        self.device = device
+        self.gt_limit = gt_limit
+        self.bias_limit = bias_limit
+
+        raw_gt_load = self.load_csv(ground_truth_path)
+
+        target_column = 'SEX'
+        target_dist = {1:0.8, 2:0.2}
+        #self.ground_truth_dataset, self.biased_dataset
+        self.biased_dataset = self.sample_categorical_distribution(raw_gt_load, 
+                                                         target_column, 
+                                                         target_dist, 
+                                                         bias_limit, 
+                                                         replace=False, 
+                                                         random_state=rngs['seed_bias']).to_numpy(dtype=np.float, na_value=0)
+        self.ground_truth_dataset = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rngs['seed_gt']).to_numpy(dtype=np.float, na_value=0)
+
+        print(self.biased_dataset.shape, self.ground_truth_dataset.shape)
+        exit(1)
+
+    def sample_categorical_distribution(df, column, target_dist, K, replace=False, random_state=None):
+        """
+        Sample K rows from df such that the distribution of the values in the specified column
+        matches the target categorical distribution.
+
+        Parameters:
+            df (pd.DataFrame): Original DataFrame.
+            column_index (int): Index of the column to match distribution on.
+            target_dist (dict): Target distribution (e.g., {0: 0.5, 1: 0.3, 2: 0.2}).
+            K (int): Total number of samples to draw.
+            replace (bool): Whether to sample with replacement.
+            random_state (int or None): Seed for reproducibility.
+
+        Returns:
+            pd.DataFrame: Sampled DataFrame of size K.
+        """
+        np.random.seed(random_state)
+        result_dfs = []
+        
+        for category, proportion in target_dist.items():
+            num_samples = int(round(proportion * K))
+            subset = df[df[column] == category]
+            
+            if len(subset) == 0:
+                raise ValueError(f"No samples found for category '{category}' in the specified column.")
+            if not replace and num_samples > len(subset):
+                raise ValueError(f"Not enough samples in category '{category}' to sample {num_samples} without replacement.")
+            
+            sampled = subset.sample(n=num_samples, replace=replace, random_state=random_state)
+            result_dfs.append(sampled)
+        
+        result = pd.concat(result_dfs).sample(frac=1, random_state=random_state).reset_index(drop=True)
+        
+        # Fix any rounding issues (e.g., if total != K due to rounding)
+        if len(result) > K:
+            result = result.sample(n=K, random_state=random_state)
+        elif len(result) < K:
+            extra = df.sample(n=K - len(result), replace=replace, random_state=random_state)
+            result = pd.concat([result, extra]).sample(frac=1, random_state=random_state).reset_index(drop=True)
+        
+        return result
 
 class D4P_dataset():
     def __init__(self,
