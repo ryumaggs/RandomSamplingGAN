@@ -111,3 +111,50 @@ def set_seed(seed,
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     return rngs
+
+def get_avg_grad_per_layer(model):
+    grad_sum = 0
+
+    for name, param in model.named_parameters():
+        if param.grad is not None:
+            avg_grad = param.grad.abs().mean().item()
+            grad_sum += avg_grad
+
+    return grad_sum
+
+def normalize_to_minus1_plus1(data1,data2):
+    """
+    Normalize a 2D tensor dataset (samples x features) feature-wise to [-1, 1].
+
+    Args:
+        data (torch.Tensor): shape (N, D), float or double
+
+    Returns:
+        normalized_data (torch.Tensor): same shape, normalized to [-1, 1]
+        data_min (torch.Tensor): shape (D,), min of each feature before scaling
+        data_max (torch.Tensor): shape (D,), max of each feature before scaling
+    """
+    data_min = np.array([min(x,y) for x,y in zip(np.min(data1, axis=0), np.min(data2, axis=0))])
+    data_max = np.array([max(x,y) for x,y in zip(np.max(data1, axis=0), np.max(data2, axis=0))])
+
+    # Avoid division by zero for constant features
+    denom = data_max - data_min
+    denom[denom == 0] = 1.0
+
+    # Scale to [0,1]
+    data_norm_0_1 = (data1 - data_min) / denom
+    # Scale to [-1, 1]
+    data_norm_1 = data_norm_0_1 * 2 - 1
+
+    # Scale to [0,1]
+    data_norm_0_2 = (data2 - data_min) / denom
+    # Scale to [-1, 1]
+    data_norm_2 = data_norm_0_2 * 2 - 1
+    return data_norm_1, data_norm_2
+
+def warmup_spectral_norm(model, input_shape, device=torch.device('cuda:0'), steps=5):
+    print("in warmup")
+    model.eval()
+    dummy_input = torch.randn(*input_shape).to(device)
+    for _ in range(steps):
+        _ = model(dummy_input)

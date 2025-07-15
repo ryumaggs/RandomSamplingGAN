@@ -181,25 +181,47 @@ class DeepSetNet(nn.Module):
         commented code for fast experimentation
         '''
         super().__init__()
-        self.rngs = rngs
         self.batch_size = batch_size
-        self.phi = nn.Sequential(
-            nn.Linear(num_features, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.Identity()
-        )
-        self.rho = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Linear(hidden_dim, 1),  # output one logit per data point
-            nn.Identity()
-        )
         self.sample_size = sample_size
         self.temperature = temperature
+        self.rngs = rngs
+        phi_layers = []
+        rho_layers = []
+        if len(layers) == 0:
+            phi_layers.append(nn.Linear(num_features,hidden_dim))
+            phi_layers.append(nn.Identity())
+
+            rho_layers.append(nn.Linear(hidden_dim, 1))
+            rho_layers.append(nn.Identity())
+        else:
+            phi_layers.append(nn.Linear(num_features,layers[0]))
+            #phi_layers.append(nn.LayerNorm(layers[0]))
+            phi_layers.append(nn.LeakyReLU(0.2))
+            phi_layers.append(nn.Dropout(dropout))
+
+            rho_layers.append(nn.Linear(hidden_dim,layers[0]))
+            #rho_layers.append(nn.LayerNorm(layers[0]))
+            rho_layers.append(nn.LeakyReLU(0.2))
+            rho_layers.append(nn.Dropout(dropout))
+            for i,l in enumerate(layers):
+                if i+1 >= len(layers): #at the end
+                    phi_layers.append(nn.Linear(l,hidden_dim))
+                    phi_layers.append(nn.Identity())
+
+                    rho_layers.append(nn.Linear(l,1))
+                    rho_layers.append(nn.Identity())
+                else:
+                    phi_layers.append(nn.Linear(l,layers[i+1]))
+                    #phi_layers.append(nn.LayerNorm(layers[i+1]))
+                    phi_layers.append(nn.LeakyReLU(0.2))
+                    phi_layers.append(nn.Dropout(dropout))
+
+                    rho_layers.append(nn.Linear(l,layers[i+1]))
+                    #rho_layers.append(nn.LayerNorm(layers[i+1]))
+                    rho_layers.append(nn.LeakyReLU(0.2))
+                    rho_layers.append(nn.Dropout(dropout))
+        self.phi = nn.Sequential(*phi_layers)
+        self.rho = nn.Sequential(*rho_layers)
 
         self.apply_he_init_to_sequential(self.phi)
         self.apply_he_init_to_sequential(self.rho)
@@ -214,6 +236,8 @@ class DeepSetNet(nn.Module):
             if isinstance(layer, torch.nn.Linear):
                 if isinstance(model[layer_id+1],torch.nn.Identity):
                     torch.nn.init.xavier_uniform_(layer.weight, generator=self.rngs['torch']) 
+                elif isinstance(model[layer_id+1],torch.nn.LeakyReLU):
+                    torch.nn.init.kaiming_uniform_(layer.weight, generator=self.rngs['torch']) 
                 elif isinstance(model[layer_id+2],torch.nn.Identity):
                     torch.nn.init.xavier_uniform_(layer.weight, generator=self.rngs['torch']) 
                 elif isinstance(model[layer_id+2],torch.nn.LeakyReLU):  # Apply He initialization to Linear layers
@@ -236,7 +260,6 @@ class DeepSetNet(nn.Module):
         #probs = F.softmax(x_rho.squeeze(-1), dim=0)       # [N]
         logits = logits.unsqueeze(0).repeat((self.sample_size*bs,1))
         #matrix = F.gumbel_softmax(logits, tau=self.temperature, hard=False, dim=1) # give index
-
         # manual gumbel softmax
         gumbels = -torch.empty_like(logits, memory_format=torch.legacy_contiguous_format).exponential_(generator=self.rngs['torch_cuda']).log()
         # Apply the Gumbel-Softmax transformation

@@ -5,7 +5,7 @@ from tqdm import tqdm
 from scipy.special import softmax
 import pandas as pd
 import torch
-from util import dict2vector
+from util import dict2vector, normalize_to_minus1_plus1
 from DataProcessing import *
 from sklearn.preprocessing import StandardScaler
 from HouseholdCensusDataProcessing import *
@@ -111,7 +111,6 @@ class Axios_ipsosdataset():
         
         return df
 
-
 class HouseholdPulse_dataset():
     def __init__(self,
                  ground_truth_path,
@@ -131,23 +130,16 @@ class HouseholdPulse_dataset():
 
         self.num_categories_per_features = [raw_gt_load[col].nunique() for col in raw_gt_load.columns]
         self.num_categories_per_features = self.num_categories_per_features[1:]
-        #sample ground truth by gt limit
-        '''
-        gt columns = ['PERWT', 'REGION', 'EDUC', 'INCTOT', 'SEX', 'MARST', 'FAMSIZE', 'RACE',
-       'AGE', 'BIDENPERC'],
 
-        bias columns = ['RECVDVACC', 'REGION', 'EDUC', 'INCTOT', 'SEX', 'MARST', 'FAMSIZE',
-       'RACE', 'AGE', 'BIDENPERC']
-        '''
         if type(rngs) == list:
             gt_list = []
             bd_list = []
             for rng in rngs:
                 gtd, bd = self.load_data_with_rngs(columns_to_keep,
                                                     raw_bias_load,
-                                                    bias_limit,
+                                                    self.bias_limit,
                                                     raw_gt_load,
-                                                    gt_limit,
+                                                    self.gt_limit,
                                                     rng)
                 bd_list.append(bd)
                 gt_list.append(gtd)
@@ -164,11 +156,32 @@ class HouseholdPulse_dataset():
         del raw_gt_load
         del raw_bias_load 
         
-        self.var_setup
+        self.synthetic_label_1 = None
+        self.synthetic_label_2 = None
+        self.var_setup()
     
+    def var_setup_onhold(self):
+        self.biased_labels = self.biased_dataset[:,0]
+        print("uniform avg target: ", sum(self.biased_labels)/len(self.biased_labels))
+        self.unscaled_ground_truth = self.ground_truth_dataset[:,1:]
+        self.unscaled_biased = self.biased_dataset[:,1:]
+
+        self.ground_truth_dataset, self.biased_dataset = normalize_to_minus1_plus1(self.unscaled_ground_truth, self.unscaled_biased)
+
+        self.ground_truth = None
+        self.ground_truth_demographics = None
+
+        #bias has axios weights in column 0 and vaccinated status in column -1
+        #gt has census weights in column 0
+        self.gt_cpu = self.ground_truth_dataset
+        self.bias_cpu = self.biased_dataset
+
+        self.ground_truth_dataset = torch.tensor(self.ground_truth_dataset,device=self.device,dtype=torch.float32)
+        self.biased_dataset = torch.tensor(self.biased_dataset,device=self.device,dtype=torch.float32)
+
     def var_setup(self):
         self.biased_labels = self.biased_dataset[:,0]
-        print("uniform avg vaccine: ", sum(self.biased_labels)/len(self.biased_labels))
+        print("uniform avg target: ", sum(self.biased_labels)/len(self.biased_labels))
         self.unscaled_ground_truth = self.ground_truth_dataset[:,1:]
         self.unscaled_biased = self.biased_dataset[:,1:]
         test = np.concatenate((self.ground_truth_dataset[:,1:],self.biased_dataset[:,1:]))
@@ -184,9 +197,8 @@ class HouseholdPulse_dataset():
                                                     self.num_categories_per_features,
                                                     device=self.device)
 
-        self.unscaled_ground_truth, self.unscaled_biased = self.create_combination_id_mapping(self.unscaled_ground_truth,
-                                                                                              self.unscaled_biased)
-
+        #self.unscaled_ground_truth, self.unscaled_biased = self.create_combination_id_mapping(self.unscaled_ground_truth,
+        #                                                                                      self.unscaled_biased)
         #bias has axios weights in column 0 and vaccinated status in column -1
         #gt has census weights in column 0
         self.gt_cpu = self.ground_truth_dataset
@@ -231,14 +243,19 @@ class HouseholdPulse_dataset():
             census_columns_to_keep = ['PERWT']
             census_columns_to_keep.extend(list(columns_to_keep))
             gtd = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rngs['seed_gt'])[census_columns_to_keep].to_numpy(dtype=np.float, na_value=0)
-        else:
-            gtd = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rngs['seed_gt']).to_numpy(dtype=np.float, na_value=0)
-        if columns_to_keep is not None:
             survey_columns_to_keep = ['RECVDVACC']
             survey_columns_to_keep.extend(list(columns_to_keep))
-            bd = raw_bias_load.sample(n=bias_limit,random_state=rngs['seed_bias'])[survey_columns_to_keep].to_numpy(dtype=np.float, na_value=0)
+            if bias_limit > raw_bias_load.shape[0]:
+                bd = raw_bias_load[survey_columns_to_keep].to_numpy(dtype=np.float, na_value=0)
+            else:
+                bd = raw_bias_load.sample(n=bias_limit,random_state=rngs['seed_bias'])[survey_columns_to_keep].to_numpy(dtype=np.float, na_value=0)
+
         else:
-            bd = raw_bias_load.sample(n=bias_limit,random_state=rngs['seed_bias']).to_numpy(dtype=np.float, na_value=0)
+            gtd = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rngs['seed_gt']).to_numpy(dtype=np.float, na_value=0)
+            if bias_limit > raw_bias_load.shape[0]:
+                bd = raw_bias_load.to_numpy(dtype=np.float, na_value=0)
+            else:
+                bd = raw_bias_load.sample(n=bias_limit,random_state=rngs['seed_bias']).to_numpy(dtype=np.float, na_value=0)
         return gtd, bd
     
     def create_combination_id_mapping(self,np1, np2):
@@ -287,34 +304,103 @@ class HouseholdPulse_dataset():
 class HouseholdPulse_synthetic(HouseholdPulse_dataset):
     def __init__(self,
                  ground_truth_path,
+                 bias_path,
                  rngs,
                  device=None,
-                 columns_to_keep = None,
                  gt_limit = 5000,
                  bias_limit = 1000, ):
-        
+        '''
+        column_names - list[str] - len(2) - 2 valid column names in the ground_truth dataset 
+        '''
         self.type = 'real'
         self.device = device
         self.gt_limit = gt_limit
         self.bias_limit = bias_limit
-
+        rng = rngs[0]
         raw_gt_load = self.load_csv(ground_truth_path)
+        self.ground_truth_dataset = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rng['seed_gt'])
 
-        target_column = 'SEX'
-        target_dist = {1:0.8, 2:0.2}
-        #self.ground_truth_dataset, self.biased_dataset
-        self.biased_dataset = self.sample_categorical_distribution(raw_gt_load, 
-                                                         target_column, 
-                                                         target_dist, 
-                                                         bias_limit, 
-                                                         replace=False, 
-                                                         random_state=rngs['seed_bias']).to_numpy(dtype=np.float, na_value=0)
-        self.ground_truth_dataset = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rngs['seed_gt']).to_numpy(dtype=np.float, na_value=0)
+        self.num_categories_per_features = [raw_gt_load[col].nunique() for col in raw_gt_load.columns]
+        self.num_categories_per_features = self.num_categories_per_features[1:]
 
-        print(self.biased_dataset.shape, self.ground_truth_dataset.shape)
-        exit(1)
+        #pick two random variables
+        all_columns = list(self.ground_truth_dataset.columns)
+        indexes = np.arange(len(all_columns))[1:]
+        var_1_index = 4 #np.random.choice(indexes)
+        indexes = indexes[indexes != var_1_index]
+        var_2_index = 1 #np.random.choice(indexes)
+        var_1 = all_columns[var_1_index]
+        var_2 = all_columns[var_2_index]
+        self.column_names = [var_1, var_2] #store selected columns for use at :355
+        self.col_indexes = [var_1_index-1, var_2_index-1]
 
-    def sample_categorical_distribution(df, column, target_dist, K, replace=False, random_state=None):
+        #compute and store original joint distribution
+        joint_dist = pd.crosstab(self.ground_truth_dataset[var_1], self.ground_truth_dataset[var_2], normalize=True)
+        joint_np = joint_dist.values
+        x_vals = sorted(self.ground_truth_dataset[var_1].unique())
+        y_vals = sorted(self.ground_truth_dataset[var_2].unique())
+        self.original_distribution = np.copy(joint_np).flatten()
+        self.var_counts = [len(x_vals),len(y_vals)]
+
+        #pick random cell in the joint distribution to be upscaled
+        rand_x = np.random.choice(np.arange(len(x_vals)))
+        rand_y = np.random.choice(np.arange(len(y_vals)))
+        self.upscaled_cell = [rand_x, rand_y]
+
+        #Resample new joint after upscaling cell by epsilon
+        epsilon = 0.5
+        joint_np[rand_x, rand_y] += epsilon
+        joint_np /= joint_np.sum()  # Renormalize
+        new_joint_distr = self.resample_df_with_joint_distribution(self.column_names, self.ground_truth_dataset, joint_np, x_vals, y_vals, bias_limit)
+        #experimental
+        self.missing_values = self.has_missing_joints(new_joint_distr, col_i=var_1, col_j=var_2)
+
+        #determining what is missing from data set
+        self.biased_dataset = new_joint_distr.to_numpy(dtype=np.float, na_value=0)
+        self.ground_truth_dataset = self.ground_truth_dataset.to_numpy(dtype=np.float, na_value=0)
+
+        self.var_setup()
+
+        
+    def has_missing_joints(self, df, col_i='col_i', col_j='col_j'):
+        unique_i = df[col_i].unique()
+        unique_j = df[col_j].unique()
+
+        full_index = pd.MultiIndex.from_product([unique_i, unique_j])
+        observed_index = pd.MultiIndex.from_frame(df[[col_i, col_j]].drop_duplicates())
+
+        return not full_index.isin(observed_index).all()
+
+    def resample_df_with_joint_distribution(self,col_names, df, joint_np, x_vals, y_vals, n_samples):
+        # Create DataFrame for desired (X, Y) frequencies
+        xy_freq = pd.DataFrame(
+            [(x_vals[i], y_vals[j], joint_np[i, j]) for i in range(len(x_vals)) for j in range(len(y_vals))],
+            columns=[col_names[0], col_names[1], 'prob']
+        )
+
+        # Compute how many samples to take from each (X, Y) group
+        xy_freq['n'] = (xy_freq['prob'] * n_samples).round().astype(int)
+
+        resampled_parts = []
+
+        for _, row in xy_freq.iterrows():
+            x_val, y_val, n = row[col_names[0]], row[col_names[1]], row['n']
+            group = df[(df[col_names[0]] == x_val) & (df[col_names[1]] == y_val)]
+
+            if len(group) == 0:
+                continue  # Skip if no such group exists in original data
+
+            # Sample with replacement if necessary
+            n = int(n)
+            sampled = group.sample(n=n, replace=(n > len(group)))
+            resampled_parts.append(sampled)
+
+        # Combine all sampled parts
+        resampled_df = pd.concat(resampled_parts, ignore_index=True)
+        
+        return resampled_df
+
+    def sample_categorical_distribution(self,df, column, target_dist, K, replace=False, random_state=None):
         """
         Sample K rows from df such that the distribution of the values in the specified column
         matches the target categorical distribution.
@@ -330,7 +416,6 @@ class HouseholdPulse_synthetic(HouseholdPulse_dataset):
         Returns:
             pd.DataFrame: Sampled DataFrame of size K.
         """
-        np.random.seed(random_state)
         result_dfs = []
         
         for category, proportion in target_dist.items():
@@ -355,6 +440,10 @@ class HouseholdPulse_synthetic(HouseholdPulse_dataset):
             result = pd.concat([result, extra]).sample(frac=1, random_state=random_state).reset_index(drop=True)
         
         return result
+
+class Ari_dataset(HouseholdPulse_dataset):
+    def dummy(self):
+        pass
 
 class D4P_dataset():
     def __init__(self,
@@ -450,7 +539,6 @@ class D4P_dataset():
         #convert back to numpy
         return df1.to_numpy(), df2.to_numpy()
     
-    
 class RealPredictionDataset():
     def __init__(self,
                  ground_truth_path,
@@ -514,7 +602,6 @@ class RealImportanceDataset():
         random_importance_vector = np.random.random(size=(22,1))
         self.ground_truth = (self.biased_dataset @ random_importance_vector).flatten()
         self.ground_truth = [i / sum(self.ground_truth) for i in self.ground_truth]
-
 
 class ImportanceDataset():
     def __init__(self,

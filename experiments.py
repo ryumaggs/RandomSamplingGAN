@@ -18,7 +18,7 @@ import logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(filename='train_log.log', level=logging.INFO)
 
-from Dataset import Axios_ipsosdataset, HouseholdPulse_dataset, D4P_dataset, HouseholdPulse_synthetic
+from Dataset import Axios_ipsosdataset, HouseholdPulse_dataset, D4P_dataset, HouseholdPulse_synthetic, Ari_dataset
 from GAN import GAN, WGAN_GP, WGAN_GP_fict
 from Discriminator import DataDiscriminator
 from util import set_seed
@@ -34,30 +34,30 @@ from itertools import combinations
 #NEW TRAINING VARIABLE SET UP
 # For learning
 #runs_consistency_SameData_SameSeen_diffNetwork,Seed:359556
-
+DEBUG_MODE = False
 
 BATCH_SIZE = 16
 SUBSET_SIZE = 128
 GENERATOR_TRAINING_FACTOR = 1
 DISCRIMINATOR_TRAINING_FACTOR = 8
 GT_LIMIT = 25000
-BIAS_LIMIT = 5000
-LAMBDAGP = 5
-LAMBDAW = 500
-LAMBDAD = 20
+BIAS_LIMIT = 2000
+LAMBDAGP = 0
+LAMBDAW = 1 #40
+LAMBDAD = 1
 GENERATOR_LEARNING_RATE = 1e-4 #5e-6
-DISCRIMINATOR_LEARNING_RATE = 1e-6
+DISCRIMINATOR_LEARNING_RATE = 1e-5 #1e-6
 BATCHS_IN_EPOCH = 1
-EPOCHS = 1000 # the stream is infinite so one epoch will be defined as BATCHS_IN_EPOCH * BATCH_SIZE
-NUM_TRIALS = 15
+EPOCHS = 500 # the stream is infinite so one epoch will be defined as BATCHS_IN_EPOCH * BATCH_SIZE
+NUM_TRIALS = 300
 GEN_HISTORY_LENGTH = 1
 
-SAME_DATA_GT = False
-SAME_DATA_BIAS = False
-SAME_DATA_SEEN = False
+SAME_DATA_GT = True
+SAME_DATA_BIAS = True
+SAME_DATA_SEEN = True
 SAME_NETWORK_INIT = True
 #
-fixed_seed = [np.random.randint(1e6)] #[701636, 870664] #np.random.randint(1e6)
+fixed_seed = [np.random.randint(1e6)]
 all_rngs = []
 print('SETTING SEED: ', fixed_seed)
 if type(fixed_seed) == list:
@@ -85,12 +85,12 @@ if DEBUG_MODE:
     SUBSET_SIZE=2
     DISCRIMINATOR_TRAINING_FACTOR = 5
     EPOCHS = 10
-    NUM_TRIALS = 1 #30
+    NUM_TRIALS = 30
 
-SAVE_EVERY = 50
+SAVE_EVERY = None
 
-GEN_DROPOUT = 0.0
-DISC_DROPOUT = 0.0
+GEN_DROPOUT = 0.2
+DISC_DROPOUT = 0.2
 
 #measures of consistency
 
@@ -103,8 +103,8 @@ zero_prob = 0
 
 
     
-GEN_LAYERS = [1024,1024] #[256 for _ in range(5)]
-DISC_LAYERS = [1024,1024]
+GEN_LAYERS = [1024] #[256 for _ in range(5)]
+DISC_LAYERS = [1024]
 
 generator_types = ['dataGen'] #['dataGen','weightsGen','onesGen']
 
@@ -132,10 +132,10 @@ def check_identical_networks(gan1, gan2):
 if __name__ == "__main__":
     for w in range(29,30):
         #make a new runs folder
-
         week = str(w)
         exp_vars = {}
-        #exp_vars['disc_layers'] = [[1024,1024,1024,1024]]
+        exp_vars['disc_layers'] = [[1024,1024,1024]]
+        #exp_vars['gen_layers'] = [[1024]]
         #exp_vars['learning_rates'] = [5e-5, 1e-5, 5e-6, 1e-6]
         #exp_vars['warmup_duration'] = [1000, 2000, 3000, 4000]
         #exp_vars['discriminator_dropout'] = [0.1, 0.2, 0.3]
@@ -145,13 +145,13 @@ if __name__ == "__main__":
         #exp_vars['gen_learning_rate'] = [1e-6]
         #exp_vars['gt_limit'] = [GT_LIMIT]
         #exp_vars['bias_limit'] = [BIAS_LIMIT]
-        #exp_vars['subset_size'] = [32]
+        #exp_vars['subset_size'] = [512]
         #exp_vars['gen_training_factor'] = [1,3,5]
-        #exp_vars['batch_size'] = [512]
-        exp_vars['lambdaw'] = [20, 30, 40]
-        #exp_vars['tau'] = [0.1]
+        #exp_vars['batch_size'] = [1,4,8,16,32,64]
+        #exp_vars['lambdaw'] = [500]
+        #exp_vars['tau'] = [0.05, 0.25, 0.55, 0.75, 0.95]
         #exp_vars['columns_to_keep'] = [('EDUC', 'INCTOT', 'AGE')] #['REGION', 'EDUC', 'INCTOT', 'SEX', 'MARST', 'FAMSIZE', 'RACE','AGE', 'BIDENPERC']
-        #exp_vars['lambdad'] = [4]
+        #exp_vars['lambdad'] = [0,10,20,30,40]
         #exp_vars['gen_history_length'] = [1]
         old_g = None
 
@@ -189,75 +189,43 @@ if __name__ == "__main__":
                                             gt_limit=gt_limit)
 
                 for cvar in val:
-                    
-                    glearningrate = GENERATOR_LEARNING_RATE
-                    dlearningrate = DISCRIMINATOR_LEARNING_RATE
-                    gen_layers = GEN_LAYERS
-                    disc_layers = DISC_LAYERS
-                    wudur = warmup_durations[0]
-                    generator_dropout = GEN_DROPOUT
-                    discriminator_dropout = DISC_DROPOUT
-                    gtrainingfactor = GENERATOR_TRAINING_FACTOR
-                    dtrainingfactor = DISCRIMINATOR_TRAINING_FACTOR
-                    subset_size = SUBSET_SIZE
-                    batch_size = BATCH_SIZE
-                    lambdagp = LAMBDAGP
-                    lambdaw = LAMBDAW
-                    lambdad = LAMBDAD
-                    tau = TEMPERATURE
-                    gen_history_length = GEN_HISTORY_LENGTH
-                    ctk = None
 
-                    if exp_var == 'gen_layers':
-                        gen_layers = cvar
-                    elif exp_var == 'disc_layers':
-                        disc_layers = cvar
-                    elif exp_var == 'layers':
-                        gen_layers = cvar
-                        disc_layers = cvar
-                    elif exp_var == 'gen_learning_rate':
-                        glearningrate = cvar
-                    elif exp_var == 'disc_learning_rate':
-                        dlearningrate = cvar
-                    elif exp_var == 'warmup_duration':
-                        wudur = cvar
-                    elif exp_var == 'discriminator_dropout':
-                        discriminator_dropout = cvar
-                    elif exp_var == 'disc_training_factor':
-                        dtrainingfactor = cvar
-                    elif exp_var == 'lambda_gp':
-                        lambdagp = cvar
-                    elif exp_var == 'subset_size':
-                        subset_size = cvar
-                    elif exp_var == 'gt_limit':
+                    hparams = {
+                        "glearningrate": GENERATOR_LEARNING_RATE,
+                        "dlearningrate": DISCRIMINATOR_LEARNING_RATE,
+                        "gen_layers": GEN_LAYERS,
+                        "disc_layers": DISC_LAYERS,
+                        "wudur": warmup_durations[0],
+                        "generator_dropout": GEN_DROPOUT,
+                        "discriminator_dropout": DISC_DROPOUT,
+                        "gtrainingfactor": GENERATOR_TRAINING_FACTOR,
+                        "dtrainingfactor": DISCRIMINATOR_TRAINING_FACTOR,
+                        "subset_size": SUBSET_SIZE,
+                        "batch_size": BATCH_SIZE,
+                        "lambdagp": LAMBDAGP,
+                        "lambdaw": LAMBDAW,
+                        "lambdad": LAMBDAD,
+                        "tau": TEMPERATURE,
+                        "gen_history_length": GEN_HISTORY_LENGTH,
+                    }
+
+                    if exp_var == 'gt_limit':
                         pass
                     elif exp_var == 'bias_limit':
                         pass
-                    elif exp_var == 'gen_training_factor':
-                        gtrainingfactor = cvar
-                    elif exp_var == 'batch_size':
-                        batch_size = cvar
-                    elif exp_var == 'lambdaw':
-                        lambdaw = cvar
-                    elif exp_var == 'tau':
-                        tau = cvar
-                    elif exp_var == 'columns_to_keep':
-                        ctk = cvar
-                    elif exp_var == 'lambdad':
-                        lambdad = cvar
-                    elif exp_var == 'gen_history_length':
-                        gen_history_length = cvar
+                    elif exp_var in hparams:
+                        hparams[exp_var] = cvar
                     else:
                         raise NotImplementedError
+                    
                     '''
                     d = D4P_dataset(ground_truth_path='./data/censusHouseholdPulse_data/ipums_cleaned.csv',
                                     bias_path = './data/progress_data/week'+week+'_cleaned.csv',
                                     rngs=rngs,
                                     device=device,
                                     gt_limit = GT_LIMIT,
-                                    )'''
-                    
-                    d = HouseholdPulse_synthetic(ground_truth_path='./data/censusHouseholdPulse_data/ipums_cleaned.csv',
+                                    )
+                    d = HouseholdPulse_dataset(ground_truth_path='./data/censusHouseholdPulse_data/ipums_cleaned.csv',
                                     bias_path = './data/censusHouseholdPulse_data/pulse_week'+week+'_cleaned.csv',
                                     rngs=rngs,
                                     device=device,
@@ -265,43 +233,70 @@ if __name__ == "__main__":
                                     gt_limit = GT_LIMIT*len(rngs),
                                     bias_limit = BIAS_LIMIT, 
                                     )
+                    d = Ari_dataset(ground_truth_path='./data/ari_survey/ipums_cleaned.csv',
+                                    bias_path = './data/ari_survey/aricleaned.csv',
+                                    rngs=rngs,
+                                    device=device,
+                                    columns_to_keep = None,
+                                    gt_limit = GT_LIMIT*len(rngs),
+                                    bias_limit = BIAS_LIMIT,
+                                    )
+                    '''
+                    data_creation_counter = 0
+                    try:
+                        while True:
+                            d = HouseholdPulse_synthetic(ground_truth_path='./data/censusHouseholdPulse_data/ipums_cleaned.csv',
+                                    bias_path = './data/censusHouseholdPulse_data/pulse_week'+week+'_cleaned.csv',
+                                    rngs=rngs,
+                                    device=device,
+                                    gt_limit = GT_LIMIT*len(rngs),
+                                    bias_limit = BIAS_LIMIT, 
+                                    )
+                            if not d.missing_values:
+                                break
+                            else:
+                                data_creation_counter += 1
+                    except KeyboardInterrupt:
+                        print("\nKeyboard interrupt received. Exiting gracefully.")
+
                     if type(rngs) == list:
                         rngs = rngs[0]
 
                     print("idealy 1k to 5k generaor updates...")
-                    print("N Generator updates: ", (EPOCHS * GT_LIMIT*len(rngs)) / (BATCH_SIZE * dtrainingfactor))
+                    print("N Generator updates: ", (EPOCHS * GT_LIMIT*len(rngs)) / (BATCH_SIZE * hparams['dtrainingfactor']))
 
                     gan = WGAN_GP(
-                        history_length=gen_history_length,
-                        rngs=rngs,
-                        dataset=d,
-                        generator_type = 'deepSet',
-                        discriminator_type = 'deepSet',
-                        gen_learning_rate=glearningrate,
-                        disc_learning_rate=dlearningrate,
-                        batch_size=batch_size,
-                        truth_sample_size=subset_size,
-                        gen_layers=gen_layers,
-                        disc_layers=disc_layers,
-                        bias_sample_size=subset_size,
-                        lambda_gp = lambdagp,
-                        lambda_weights= lambdaw,
-                        lambda_demo = lambdad,
-                        temperature=tau,
-                        warmup_length = wudur,
-                        lambda_regularizer = 0,
-                        generator_dropout = generator_dropout,
-                        discriminator_dropout = discriminator_dropout,
-                        )
-                    if DEBUG_MODE:
-                        check_identical_networks(old_g, gan)
-                        old_g = copy.deepcopy(gan)
+                                rngs=rngs,
+                                dataset=d,
+                                generator_type='deepSet',
+                                discriminator_type='deepSet',
+                                gen_learning_rate=hparams["glearningrate"],
+                                disc_learning_rate=hparams["dlearningrate"],
+                                batch_size=hparams["batch_size"],
+                                truth_sample_size=hparams["subset_size"],
+                                gen_layers=hparams["gen_layers"],
+                                disc_layers=hparams["disc_layers"],
+                                bias_sample_size=hparams["subset_size"],
+                                lambda_gp=hparams["lambdagp"],
+                                lambda_weights=hparams["lambdaw"],
+                                lambda_demo=hparams["lambdad"],
+                                temperature=hparams["tau"],
+                                warmup_length=hparams["wudur"],
+                                lambda_regularizer=0,
+                                generator_dropout=hparams["generator_dropout"],
+                                discriminator_dropout=hparams["discriminator_dropout"],
+                            )
 
-                    writer = SummaryWriter(comment='iter: ' + str(tid) + '||Week='+week+'||VAR = '+str(exp_var)+":"+str(cvar)+
-                                        '||seed:'+str(rngs['seed_bias']))
-                    hparams = {'gen_lr':glearningrate,'disc_lr':dlearningrate,'batch_size':SUBSET_SIZE,
-                            'gt/bias limit':str((GT_LIMIT*len(rngs),BIAS_LIMIT*len(rngs))), 'layers':str(gen_layers) + "|"+str(disc_layers),
-                            'gt/bias dropouts':str((generator_dropout,discriminator_dropout)),}
+                    synthetic = hasattr(d, 'original_distribution')
+                    if synthetic: #synthetic data experiments
+                        writer = SummaryWriter(comment='Variables=' + str(d.column_names) + '||Cell=' + str(d.upscaled_cell)+'||seed:'+str(rngs['seed_bias']))
+                    else: #non synthetic data experiments
+                        writer = SummaryWriter(comment='iter: ' + str(tid) + '||Week='+week+'||VAR = '+str(exp_var)+":"+str(cvar)+
+                                            '||seed:'+str(rngs['seed_bias']))
+                    
+                    for key, item in hparams.items():
+                        if isinstance(item, list):
+                            hparams[key] = str(hparams[key])
                     
                     writer.add_hparams(hparams,{})
 
@@ -309,16 +304,16 @@ if __name__ == "__main__":
                                                                                                                                 EPOCHS,
                                                                                                                                 TEMPERATURE_START,
                                                                                                                                 TEMPERATURE_END,
-                                                                                                                                gtrainingfactor,
-                                                                                                                                dtrainingfactor,
+                                                                                                                                hparams['gtrainingfactor'],
+                                                                                                                                hparams['dtrainingfactor'],
                                                                                                                                 SAVE_EVERY,
                                                                                                                                 writer)
                     predicted_target = (weights @ bias_labels).item()
                     
-                    results.append((exp_var,cvar,predicted_target))
+                    #results.append((exp_var,cvar,predicted_target))
 
-                    with open('./results.pkl', 'wb') as file:
-                        pickle.dump(results,file)
+                    #with open('./results.pkl', 'wb') as file:
+                    #    pickle.dump(results,file)
                     logger.info("RESULT: " + str((exp_var,cvar,predicted_target)))
                     
                     writer.close()

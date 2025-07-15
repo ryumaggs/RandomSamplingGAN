@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+from torch.nn.utils import spectral_norm
+from util import warmup_spectral_norm
 
 class DataDiscriminator(torch.nn.Module):
     def __init__(self,
@@ -95,39 +97,94 @@ class DeepSetCritic(nn.Module):
                  num_features,
                  dropout,
                  layers,
-                 hidden_dim=1024,):
+                 hidden_dim=256,):
         super().__init__()
-
         '''
         Commented code for quick testing
-            
-
-            
         '''
         self.rngs = rngs
-        self.phi = nn.Sequential(
-            nn.Linear(num_features, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.Identity(),
-            nn.Dropout(dropout),
-        )
-        self.rho = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.LeakyReLU(0.2),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, 1),  # output one logit per data point
-            nn.Identity()
-        )
-        self.apply_he_init_to_sequential(self.phi)
-        self.apply_he_init_to_sequential(self.rho)
+        self.n_power_iterations = 5
 
+        self.rho_0 = spectral_norm(nn.Linear(hidden_dim,hidden_dim))
+        torch.nn.init.xavier_uniform_(self.rho_0.weight, generator=self.rngs['torch']) 
+        torch.nn.init.zeros_(self.rho_0 .bias)
+        self.rho_0.to(torch.device('cuda:0'))
+        self.rho_1 = spectral_norm(nn.Linear(hidden_dim,1))
+        torch.nn.init.xavier_uniform_(self.rho_1.weight, generator=self.rngs['torch']) 
+        torch.nn.init.zeros_(self.rho_1 .bias)
+        self.rho_1.to(torch.device('cuda:0'))
+
+        
+        if False:
+            phi_layers = []
+            rho_layers = []
+            if len(layers) == 0:
+                #empty layers list
+                phi_layers.append(spectral_norm(nn.Linear(num_features,hidden_dim),n_power_iterations=self.n_power_iterations))
+                phi_layers.append(nn.Identity())
+
+                rho_layers.append(spectral_norm(nn.Linear(hidden_dim, 1),n_power_iterations=self.n_power_iterations))
+                rho_layers.append(nn.Identity())
+            else:
+                #populated layers list - first layer
+                phi_layers.append(spectral_norm(nn.Linear(num_features,layers[0]),n_power_iterations=self.n_power_iterations))
+                phi_layers.append(nn.LeakyReLU(0.2))
+                phi_layers.append(nn.Dropout(dropout))
+
+                rho_layers.append(spectral_norm(nn.Linear(hidden_dim,layers[0]),n_power_iterations=self.n_power_iterations))
+                rho_layers.append(nn.LeakyReLU(0.2))
+                rho_layers.append(nn.Dropout(dropout))
+                for i,l in enumerate(layers):
+                    if i+1 >= len(layers): #last layer
+                        phi_layers.append(spectral_norm(nn.Linear(l,hidden_dim),n_power_iterations=self.n_power_iterations))
+                        phi_layers.append(nn.Identity())
+
+                        rho_layers.append(spectral_norm(nn.Linear(l,1),n_power_iterations=self.n_power_iterations))
+                        rho_layers.append(nn.Identity())
+                    else:
+                        phi_layers.append(spectral_norm(nn.Linear(l,layers[i+1]),n_power_iterations=self.n_power_iterations))
+                        #phi_layers.append(nn.LayerNorm(layers[i+1]))
+                        phi_layers.append(nn.LeakyReLU(0.2))
+                        phi_layers.append(nn.Dropout(dropout))
+
+                        rho_layers.append(spectral_norm(nn.Linear(l,layers[i+1]),n_power_iterations=self.n_power_iterations))
+                        #rho_layers.append(nn.LayerNorm(layers[i+1]))
+                        rho_layers.append(nn.LeakyReLU(0.2))
+                        rho_layers.append(nn.Dropout(dropout))
+
+        phi_layers = []
+        phi_layers.append(spectral_norm(nn.Linear(num_features,hidden_dim),n_power_iterations=self.n_power_iterations))
+        phi_layers.append(nn.LeakyReLU(0.2))
+        phi_layers.append(spectral_norm(nn.Linear(hidden_dim,hidden_dim),n_power_iterations=self.n_power_iterations))
+        phi_layers.append(nn.Identity())
+        #phi_layers.append(nn.LayerNorm(hidden_dim))
+
+        rho_layers = []
+        rho_layers.append(spectral_norm(nn.Linear(hidden_dim,hidden_dim),n_power_iterations=self.n_power_iterations))
+        rho_layers.append(nn.LeakyReLU(0.2))
+        rho_layers.append(spectral_norm(nn.Linear(hidden_dim,1),n_power_iterations=self.n_power_iterations))
+        phi_layers.append(nn.Identity())
+        
+
+        self.phi = nn.Sequential(*phi_layers)
+        self.rho = nn.Sequential(*rho_layers)
+
+        self.init_bias_only(self.phi)
+        self.init_bias_only(self.rho)
+        #self.apply_he_init_to_sequential(self.phi)
+        #self.apply_he_init_to_sequential(self.rho)
+        
         self.phi.to(torch.device('cuda:0'))
         self.rho.to(torch.device('cuda:0'))
+
+        warmup_spectral_norm(self.phi, input_shape=(1,1,num_features))
+        warmup_spectral_norm(self.rho, input_shape=(1,1,hidden_dim))
+
+    def init_bias_only(self,model):
+        for layer_id, layer in enumerate(model):
+            if isinstance(layer, torch.nn.Linear):
+                if layer.bias is not None:
+                    torch.nn.init.zeros_(layer.bias) 
 
     def apply_he_init_to_sequential(self,model):
         for layer_id, layer in enumerate(model):
@@ -136,6 +193,8 @@ class DeepSetCritic(nn.Module):
             if isinstance(layer, torch.nn.Linear):
                 if isinstance(model[layer_id+1],torch.nn.Identity):
                     torch.nn.init.xavier_uniform_(layer.weight, generator=self.rngs['torch']) 
+                elif isinstance(model[layer_id+1],torch.nn.LeakyReLU):
+                    torch.nn.init.kaiming_uniform_(layer.weight, generator=self.rngs['torch']) 
                 elif isinstance(model[layer_id+2],torch.nn.Identity):
                     torch.nn.init.xavier_uniform_(layer.weight, generator=self.rngs['torch']) 
                 elif isinstance(model[layer_id+2],torch.nn.LeakyReLU):  # Apply He initialization to Linear layers
@@ -150,18 +209,24 @@ class DeepSetCritic(nn.Module):
     def forward(self, x):  # x: [N, 8]
         # x: [batch_size, set_size, input_dim]
         x = self.phi(x)         # [B, 32, H]
-        x = x.sum(dim=1)        # [B, H] — permutation-invariant pooling
+        x = x.mean(dim=1)        # [B, H] — permutation-invariant pooling
         out = self.rho(x)       # [B, 1]
         return out
     
-    def debugging_forward(self, x, labels):  # x: [N, 8]
+    def debugging_forward(self, x):  # x: [N, 8]
         # x: [batch_size, set_size, input_dim]
-        x = self.phi(x)         # [B, 32, H]
-        x = x.mean(dim=1)        # [B, H] — permutation-invariant pooling
-        print(x[labels.squeeze()==0].mean())
-        print(x[labels.squeeze()==1].mean())
-        print("")
-        out = self.rho(x)       # [B, 1]
+        # x: [batch_size, set_size, input_dim]
+        print("x input", x.mean().item(), x.std().item())
+        x = self.phi(x)
+        print("phi output mean/std/max:", x.mean().item(), x.std().item(), x.abs().max().item())
+        print(x.shape)
+        x = x.mean(dim=1)
+        print("after mean pooling:", x.mean().item(), x.std().item(), x.abs().max().item())
+        print(x.shape)
+        out = self.rho(x)
+        print("final output:", out.mean().item(), out.std().item(), out.abs().max().item())
+        print(out.shape)
+        exit(1)
         return out
 
     def set_eval(self):
