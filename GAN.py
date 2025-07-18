@@ -457,11 +457,11 @@ class WGAN_GP(GAN):
 
             if epoch % 2 == 0:
                 with torch.no_grad():
-                    out = self.measure_intersection_recovery()
-                    writer.add_scalar('tvd', out, epoch)
+                    #out = self.measure_intersection_recovery()
+                    #writer.add_scalar('tvd', out, epoch)
 
-                    #jsd_loss = self.get_JSD_loss()
-                    #writer.add_scalar('jsd loss', jsd_loss.item(), epoch)
+                    jsd_loss = self.get_JSD_loss()
+                    writer.add_scalar('tvd', jsd_loss.item(), epoch)
                     
                     #probs = self.generator.get_weights(self.bias_dataset).flatten()
                     #print(sum(probs[self.synthetic_label_1]),sum(probs[self.synthetic_label_2]))

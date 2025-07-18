@@ -36,8 +36,8 @@ from itertools import combinations
 #runs_consistency_SameData_SameSeen_diffNetwork,Seed:359556
 DEBUG_MODE = False
 
-BATCH_SIZE = 16
-SUBSET_SIZE = 128
+BATCH_SIZE = 4
+SUBSET_SIZE = 32
 GENERATOR_TRAINING_FACTOR = 1
 DISCRIMINATOR_TRAINING_FACTOR = 8
 GT_LIMIT = 25000
@@ -45,19 +45,19 @@ BIAS_LIMIT = 2000
 LAMBDAGP = 0
 LAMBDAW = 1 #40
 LAMBDAD = 1
-GENERATOR_LEARNING_RATE = 1e-4 #5e-6
+GENERATOR_LEARNING_RATE = 1e-5 #5e-6
 DISCRIMINATOR_LEARNING_RATE = 1e-5 #1e-6
 BATCHS_IN_EPOCH = 1
-EPOCHS = 500 # the stream is infinite so one epoch will be defined as BATCHS_IN_EPOCH * BATCH_SIZE
-NUM_TRIALS = 300
+EPOCHS = 300 # the stream is infinite so one epoch will be defined as BATCHS_IN_EPOCH * BATCH_SIZE
+NUM_TRIALS = 9
 GEN_HISTORY_LENGTH = 1
 
-SAME_DATA_GT = True
-SAME_DATA_BIAS = True
-SAME_DATA_SEEN = True
+SAME_DATA_GT = False
+SAME_DATA_BIAS = False
+SAME_DATA_SEEN = False
 SAME_NETWORK_INIT = True
 #
-fixed_seed = [np.random.randint(1e6)]
+fixed_seed = [np.random.randint(0,1e6)]
 all_rngs = []
 print('SETTING SEED: ', fixed_seed)
 if type(fixed_seed) == list:
@@ -103,8 +103,8 @@ zero_prob = 0
 
 
     
-GEN_LAYERS = [1024] #[256 for _ in range(5)]
-DISC_LAYERS = [1024]
+GEN_LAYERS = [1024, 1024, 1024] #[256 for _ in range(5)]
+DISC_LAYERS = [1024, 1024, 1024]
 
 generator_types = ['dataGen'] #['dataGen','weightsGen','onesGen']
 
@@ -130,22 +130,22 @@ def check_identical_networks(gan1, gan2):
     print("Discriminator phis: ", all(torch.equal(p1, p2) for p1, p2 in zip(gan1.discriminator.phi.parameters(), gan2.discriminator.phi.parameters())))
 
 if __name__ == "__main__":
-    for w in range(29,30):
+    for w in range(23,27):
         #make a new runs folder
         week = str(w)
         exp_vars = {}
-        exp_vars['disc_layers'] = [[1024,1024,1024]]
-        #exp_vars['gen_layers'] = [[1024]]
+        #exp_vars['disc_layers'] = [[1024],[1024,1024],[1024,1024,1024]]
+        #exp_vars['gen_layers'] = [[1024],[1024,1024],[1024,1024,1024]]
         #exp_vars['learning_rates'] = [5e-5, 1e-5, 5e-6, 1e-6]
         #exp_vars['warmup_duration'] = [1000, 2000, 3000, 4000]
         #exp_vars['discriminator_dropout'] = [0.1, 0.2, 0.3]
         #exp_vars['disc_training_factor'] = [1,2]
         #exp_vars['lambda_gp'] = [10]
-        #exp_vars['disc_learning_rate'] = [3e-6]
-        #exp_vars['gen_learning_rate'] = [1e-6]
+        #exp_vars['dlearningrate'] = [3e-6]
+        exp_vars['glearningrate'] = [5e-6]
         #exp_vars['gt_limit'] = [GT_LIMIT]
         #exp_vars['bias_limit'] = [BIAS_LIMIT]
-        #exp_vars['subset_size'] = [512]
+        #exp_vars['subset_size'] = [32]
         #exp_vars['gen_training_factor'] = [1,3,5]
         #exp_vars['batch_size'] = [1,4,8,16,32,64]
         #exp_vars['lambdaw'] = [500]
@@ -166,27 +166,6 @@ if __name__ == "__main__":
         for exp_var,val in exp_vars.items():
             for tid in range(NUM_TRIALS):
                 rngs = all_rngs[tid]
-
-                if False:
-                    d = ImportanceDataset(ground_truth_path=None,
-                                    num_biased_data_points=num_biased_data_points,
-                                    device=device)
-                    d = RealImportanceDataset(ground_truth_path='./data/normalizedCleaned100.csv',
-                                            num_totaldata_ground_truth=1000,
-                                            device=device)
-                    #save_new_XBOX_csvs()
-                    d = RealPredictionDataset(ground_truth_path='./data/XBOX_GT.csv',
-                                            bias_path = './data/XBOX_bias.csv',
-                                            device=device)
-                    
-                    d = HouseholdPulse_dataset(ground_truth_path='./data/censusHouseholdPulse_data/ipums_cleaned.csv',
-                                        bias_path = './data/censusHouseholdPulse_data/pulse_week22_cleaned.csv',
-                                        device=device)
-                    
-                    d = Axios_ipsosdataset(ground_truth_path='./data/axios_processed_data/ipums_processed.csv',
-                                            bias_path = './data/axios_processed_data/wave'+str(wave_id)+'_processed.csv',
-                                            device=device,
-                                            gt_limit=gt_limit)
 
                 for cvar in val:
 
@@ -241,17 +220,18 @@ if __name__ == "__main__":
                                     gt_limit = GT_LIMIT*len(rngs),
                                     bias_limit = BIAS_LIMIT,
                                     )
-                    '''
-                    data_creation_counter = 0
-                    try:
-                        while True:
-                            d = HouseholdPulse_synthetic(ground_truth_path='./data/censusHouseholdPulse_data/ipums_cleaned.csv',
+                    
+                    d = HouseholdPulse_synthetic(ground_truth_path='./data/censusHouseholdPulse_data/ipums_cleaned.csv',
                                     bias_path = './data/censusHouseholdPulse_data/pulse_week'+week+'_cleaned.csv',
                                     rngs=rngs,
                                     device=device,
                                     gt_limit = GT_LIMIT*len(rngs),
                                     bias_limit = BIAS_LIMIT, 
                                     )
+                    data_creation_counter = 0
+                    try:
+                        while True:
+                            
                             if not d.missing_values:
                                 break
                             else:
@@ -259,8 +239,19 @@ if __name__ == "__main__":
                     except KeyboardInterrupt:
                         print("\nKeyboard interrupt received. Exiting gracefully.")
 
+                    '''
+                    
                     if type(rngs) == list:
                         rngs = rngs[0]
+
+                    d = HouseholdPulse_dataset(ground_truth_path='./data/censusHouseholdPulse_data/ipums_cleaned.csv',
+                                    bias_path = './data/censusHouseholdPulse_data/pulse_week'+week+'_cleaned.csv',
+                                    rngs=rngs,
+                                    device=device,
+                                    columns_to_keep = None,
+                                    gt_limit = GT_LIMIT*len(rngs),
+                                    bias_limit = BIAS_LIMIT, 
+                                    )
 
                     print("idealy 1k to 5k generaor updates...")
                     print("N Generator updates: ", (EPOCHS * GT_LIMIT*len(rngs)) / (BATCH_SIZE * hparams['dtrainingfactor']))
