@@ -2,3 +2,13 @@ data/
 logs/
 runs_history/
 saves/
+axiosResults.log
+bias_data_graph.pdf
+Digraph.gv
+Digraph.gv.pdf
+notebook.ipynb
+saved_gan.pikl
+train_log.log
+haoxing/
+DiscriminatorSimpleRuns/
+runs_300_all_vars_JSD_LOSS/
