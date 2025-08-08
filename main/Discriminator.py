@@ -1,10 +1,7 @@
-#global imports
 import torch
 import torch.nn as nn
 from torch.nn.utils import spectral_norm
-
-#local imports
-from main.util import warmup_spectral_norm
+from util import warmup_spectral_norm
 
 class DataDiscriminator(torch.nn.Module):
     def __init__(self,
@@ -156,16 +153,17 @@ class DeepSetCritic(nn.Module):
                         rho_layers.append(nn.Dropout(dropout))
 
         phi_layers = []
-        phi_layers.append(spectral_norm(nn.Linear(num_features,hidden_dim),n_power_iterations=self.n_power_iterations))
+        #phi_layers.append(spectral_norm(nn.Linear(num_features,hidden_dim),n_power_iterations=self.n_power_iterations))
+        phi_layers.append(nn.Linear(num_features,hidden_dim))
         phi_layers.append(nn.LeakyReLU(0.2))
-        phi_layers.append(spectral_norm(nn.Linear(hidden_dim,hidden_dim),n_power_iterations=self.n_power_iterations))
+        phi_layers.append(nn.Linear(hidden_dim,hidden_dim))
         phi_layers.append(nn.Identity())
         #phi_layers.append(nn.LayerNorm(hidden_dim))
 
         rho_layers = []
-        rho_layers.append(spectral_norm(nn.Linear(hidden_dim,hidden_dim),n_power_iterations=self.n_power_iterations))
+        rho_layers.append(nn.Linear(hidden_dim,hidden_dim))
         rho_layers.append(nn.LeakyReLU(0.2))
-        rho_layers.append(spectral_norm(nn.Linear(hidden_dim,1),n_power_iterations=self.n_power_iterations))
+        rho_layers.append(nn.Linear(hidden_dim,1))
         phi_layers.append(nn.Identity())
         
 
