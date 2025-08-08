@@ -2,3 +2,6 @@ data/
 logs/
 runs_history/
 saves/
+saves_to_share/
+UncheckedRuns/
+

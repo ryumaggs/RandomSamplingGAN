@@ -267,7 +267,7 @@ class DeepSetNet(nn.Module):
         matrix = y.softmax(dim=-1)
         output = torch.matmul(matrix, dataset)
         output = output.reshape(bs,self.sample_size,dataset.shape[1])
-        return output, matrix.detach(), None
+        return output, matrix.detach(), logits[0].detach().cpu()
     
     def get_weights(self, dataset):
         with torch.no_grad():

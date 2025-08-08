@@ -37,27 +37,41 @@ from itertools import combinations
 DEBUG_MODE = False
 
 BATCH_SIZE = 4
-SUBSET_SIZE = 32
+SUBSET_SIZE = 128
 GENERATOR_TRAINING_FACTOR = 1
-DISCRIMINATOR_TRAINING_FACTOR = 8
+DISCRIMINATOR_TRAINING_FACTOR = 200
 GT_LIMIT = 25000
-BIAS_LIMIT = 2000
-LAMBDAGP = 0
+BIAS_LIMIT = 10000
+LAMBDAGP = 10
 LAMBDAW = 1 #40
 LAMBDAD = 1
-GENERATOR_LEARNING_RATE = 1e-5 #5e-6
-DISCRIMINATOR_LEARNING_RATE = 1e-5 #1e-6
+GENERATOR_LEARNING_RATE = 1e-5
+DISCRIMINATOR_LEARNING_RATE = 1e-4
 BATCHS_IN_EPOCH = 1
-EPOCHS = 300 # the stream is infinite so one epoch will be defined as BATCHS_IN_EPOCH * BATCH_SIZE
-NUM_TRIALS = 9
-GEN_HISTORY_LENGTH = 1
+EPOCHS = 100 # the stream is infinite so one epoch will be defined as BATCHS_IN_EPOCH * BATCH_SIZE
+NUM_TRIALS = 5
+GEN_HISTORY_LENGTH = 30
+WARMUP_EPOCHS = 600
+
+DEBUG_MODE = False
+
+if DEBUG_MODE:
+    BATCH_SIZE=2
+    SUBSET_SIZE=2
+    DISCRIMINATOR_TRAINING_FACTOR = 5
+    EPOCHS = 30
+    NUM_TRIALS = 2
+    WARMUP_EPOCHS = 10
+
+SAVE_DATASET = True
+SAVE_WEIGHTS = True
 
 SAME_DATA_GT = False
 SAME_DATA_BIAS = False
 SAME_DATA_SEEN = False
-SAME_NETWORK_INIT = True
+SAME_NETWORK_INIT = False
 #
-fixed_seed = [np.random.randint(0,1e6)]
+fixed_seed = [np.random.randint(1e6)]
 all_rngs = []
 print('SETTING SEED: ', fixed_seed)
 if type(fixed_seed) == list:
@@ -78,14 +92,6 @@ else:
                             data_gen =SAME_DATA_SEEN,
                             network_init=SAME_NETWORK_INIT,))
 
-DEBUG_MODE = False
-
-if DEBUG_MODE:
-    BATCH_SIZE=2
-    SUBSET_SIZE=2
-    DISCRIMINATOR_TRAINING_FACTOR = 5
-    EPOCHS = 10
-    NUM_TRIALS = 30
 
 SAVE_EVERY = None
 
@@ -130,7 +136,7 @@ def check_identical_networks(gan1, gan2):
     print("Discriminator phis: ", all(torch.equal(p1, p2) for p1, p2 in zip(gan1.discriminator.phi.parameters(), gan2.discriminator.phi.parameters())))
 
 if __name__ == "__main__":
-    for w in range(23,27):
+    for w in range(23,30):
         #make a new runs folder
         week = str(w)
         exp_vars = {}
@@ -139,20 +145,22 @@ if __name__ == "__main__":
         #exp_vars['learning_rates'] = [5e-5, 1e-5, 5e-6, 1e-6]
         #exp_vars['warmup_duration'] = [1000, 2000, 3000, 4000]
         #exp_vars['discriminator_dropout'] = [0.1, 0.2, 0.3]
-        #exp_vars['disc_training_factor'] = [1,2]
+        #exp_vars['dtrainingfactor'] = [20]
+        #exp_vars['warmup_epochs'] = [400]
         #exp_vars['lambda_gp'] = [10]
-        #exp_vars['dlearningrate'] = [3e-6]
-        exp_vars['glearningrate'] = [5e-6]
+        #exp_vars['dlearningrate'] = [5e-6]
+        #exp_vars['glearningrate'] = [5e-6]
         #exp_vars['gt_limit'] = [GT_LIMIT]
         #exp_vars['bias_limit'] = [BIAS_LIMIT]
-        #exp_vars['subset_size'] = [32]
-        #exp_vars['gen_training_factor'] = [1,3,5]
-        #exp_vars['batch_size'] = [1,4,8,16,32,64]
+        #exp_vars['subset_size'] = [256]
+        #exp_vars['gen_training_factor'] = [2]
+        #exp_vars['batch_size'] = [10]
         #exp_vars['lambdaw'] = [500]
         #exp_vars['tau'] = [0.05, 0.25, 0.55, 0.75, 0.95]
         #exp_vars['columns_to_keep'] = [('EDUC', 'INCTOT', 'AGE')] #['REGION', 'EDUC', 'INCTOT', 'SEX', 'MARST', 'FAMSIZE', 'RACE','AGE', 'BIDENPERC']
-        #exp_vars['lambdad'] = [0,10,20,30,40]
-        #exp_vars['gen_history_length'] = [1]
+        #exp_vars['lambdad'] = [10,20,30,40]
+        exp_vars['gen_history_length'] = [1]
+        #exp_vars['epochs'] = [1000]
         old_g = None
 
         if 'columns_to_keep' in exp_vars and len(exp_vars['columns_to_keep']) == 0:
@@ -162,13 +170,11 @@ if __name__ == "__main__":
                 power_set.extend(combinations(exp_vars['columns_to_keep'], r))
             
             exp_vars['columns_to_keep'] = power_set
-
         for exp_var,val in exp_vars.items():
             for tid in range(NUM_TRIALS):
                 rngs = all_rngs[tid]
-
                 for cvar in val:
-
+                    print(cvar)
                     hparams = {
                         "glearningrate": GENERATOR_LEARNING_RATE,
                         "dlearningrate": DISCRIMINATOR_LEARNING_RATE,
@@ -186,6 +192,8 @@ if __name__ == "__main__":
                         "lambdad": LAMBDAD,
                         "tau": TEMPERATURE,
                         "gen_history_length": GEN_HISTORY_LENGTH,
+                        "epochs": EPOCHS,
+                        "warmup_epochs": WARMUP_EPOCHS,
                     }
 
                     if exp_var == 'gt_limit':
@@ -238,24 +246,30 @@ if __name__ == "__main__":
                                 data_creation_counter += 1
                     except KeyboardInterrupt:
                         print("\nKeyboard interrupt received. Exiting gracefully.")
-
                     '''
-                    
+                    #week='ALL'
+                    directory = "./saves_week"+str(week)
+                    if not os.path.exists(directory):
+                        os.makedirs(directory)
+                        print(f"Directory '{directory}' created.")
+                    else:
+                        print(f"Directory '{directory}' already exists.")
+
                     if type(rngs) == list:
                         rngs = rngs[0]
-
-                    d = HouseholdPulse_dataset(ground_truth_path='./data/censusHouseholdPulse_data/ipums_cleaned.csv',
-                                    bias_path = './data/censusHouseholdPulse_data/pulse_week'+week+'_cleaned.csv',
+                    
+                    d = HouseholdPulse_dataset(ground_truth_path='./data/censusHouseholdPulse_data/cleaned/ipums_cleaned.csv',
+                                    bias_path = './data/censusHouseholdPulse_data/cleaned/pulse_week'+week+'_cleaned.csv',
                                     rngs=rngs,
                                     device=device,
                                     columns_to_keep = None,
-                                    gt_limit = GT_LIMIT*len(rngs),
+                                    gt_limit = GT_LIMIT,
                                     bias_limit = BIAS_LIMIT, 
                                     )
 
                     print("idealy 1k to 5k generaor updates...")
-                    print("N Generator updates: ", (EPOCHS * GT_LIMIT*len(rngs)) / (BATCH_SIZE * hparams['dtrainingfactor']))
-
+                    print("N Generator updates: ", (EPOCHS * GT_LIMIT) / (BATCH_SIZE * hparams['dtrainingfactor']))
+                    print("sdjiasjd: ", hparams["dlearningrate"])
                     gan = WGAN_GP(
                                 rngs=rngs,
                                 dataset=d,
@@ -271,11 +285,15 @@ if __name__ == "__main__":
                                 lambda_gp=hparams["lambdagp"],
                                 lambda_weights=hparams["lambdaw"],
                                 lambda_demo=hparams["lambdad"],
+                                gen_history_length=hparams["gen_history_length"],
                                 temperature=hparams["tau"],
                                 warmup_length=hparams["wudur"],
                                 lambda_regularizer=0,
                                 generator_dropout=hparams["generator_dropout"],
                                 discriminator_dropout=hparams["discriminator_dropout"],
+                                save_dataset=SAVE_DATASET,
+                                save_weights=SAVE_WEIGHTS,
+                                save_dir = directory,
                             )
 
                     synthetic = hasattr(d, 'original_distribution')
@@ -292,20 +310,22 @@ if __name__ == "__main__":
                     writer.add_hparams(hparams,{})
 
                     weights, bias_labels, prob_diffs,  test_probs, test_prob_diffs, generator_losses, discriminator_losses  = gan.train(BATCHS_IN_EPOCH,
-                                                                                                                                EPOCHS,
+                                                                                                                                hparams['epochs'],
+                                                                                                                                hparams['warmup_epochs'],
                                                                                                                                 TEMPERATURE_START,
                                                                                                                                 TEMPERATURE_END,
                                                                                                                                 hparams['gtrainingfactor'],
                                                                                                                                 hparams['dtrainingfactor'],
                                                                                                                                 SAVE_EVERY,
-                                                                                                                                writer)
-                    predicted_target = (weights @ bias_labels).item()
+                                                                                                                                writer,
+                                                                                                                                tid)
+                    #predicted_target = (weights @ bias_labels).item()
                     
                     #results.append((exp_var,cvar,predicted_target))
 
                     #with open('./results.pkl', 'wb') as file:
                     #    pickle.dump(results,file)
-                    logger.info("RESULT: " + str((exp_var,cvar,predicted_target)))
+                    #logger.info("RESULT: " + str((exp_var,cvar,predicted_target)))
                     
                     writer.close()
             

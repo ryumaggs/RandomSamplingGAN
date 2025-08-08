@@ -116,6 +116,7 @@ class HouseholdPulse_dataset():
                  ground_truth_path,
                  bias_path,
                  rngs,
+                 num_labels=1,
                  device=None,
                  columns_to_keep = None,
                  gt_limit = 5000,
@@ -124,9 +125,10 @@ class HouseholdPulse_dataset():
         self.device = device
         self.gt_limit = gt_limit
         self.bias_limit = bias_limit
-
+        self.num_labels = num_labels
         raw_bias_load = self.load_csv(bias_path)#.to_numpy(dtype=np.float, na_value=0)
         raw_gt_load = self.load_csv(ground_truth_path)
+        print(raw_bias_load[:5])
 
         self.num_categories_per_features = [raw_gt_load[col].nunique() for col in raw_gt_load.columns]
         self.num_categories_per_features = self.num_categories_per_features[1:]
@@ -180,8 +182,9 @@ class HouseholdPulse_dataset():
         self.biased_dataset = torch.tensor(self.biased_dataset,device=self.device,dtype=torch.float32)
 
     def var_setup(self):
-        self.biased_labels = self.biased_dataset[:,0]
-        print("uniform avg target: ", sum(self.biased_labels)/len(self.biased_labels))
+        self.biased_labels = self.biased_dataset[:,:self.num_labels]
+        for nl in range(self.num_labels):
+            print("uniform avg target: ", sum(self.biased_labels[nl])/len(self.biased_labels[nl]))
         self.unscaled_ground_truth = self.ground_truth_dataset[:,1:]
         self.unscaled_biased = self.biased_dataset[:,1:]
         test = np.concatenate((self.ground_truth_dataset[:,1:],self.biased_dataset[:,1:]))
@@ -245,7 +248,7 @@ class HouseholdPulse_dataset():
             gtd = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rngs['seed_gt'])[census_columns_to_keep].to_numpy(dtype=np.float, na_value=0)
             survey_columns_to_keep = ['RECVDVACC']
             survey_columns_to_keep.extend(list(columns_to_keep))
-            if bias_limit > raw_bias_load.shape[0]:
+            if bias_limit >= raw_bias_load.shape[0]:
                 bd = raw_bias_load[survey_columns_to_keep].to_numpy(dtype=np.float, na_value=0)
             else:
                 bd = raw_bias_load.sample(n=bias_limit,random_state=rngs['seed_bias'])[survey_columns_to_keep].to_numpy(dtype=np.float, na_value=0)
