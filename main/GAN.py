@@ -1,16 +1,20 @@
+#global imports
 import torch
 import torch.nn as nn
 import numpy as np
 import random
-from Generator import onesGen, dataGen, weightsGen, DeepSetNet
-from Discriminator import Discriminator, DeepSetCritic
-from util import dict2vector, get_avg_grad_per_layer
 from tqdm import tqdm
 import pytorch_warmup as warmup
 import torch.autograd as autograd
 from scipy.spatial.distance import jensenshannon
 import copy
 import pandas as pd
+
+#local imports
+from main.Generator import onesGen, dataGen, weightsGen, DeepSetNet
+from main.Discriminator import Discriminator, DeepSetCritic
+from main.util import dict2vector, get_avg_grad_per_layer
+
 
 class GAN():
     def __init__(self,

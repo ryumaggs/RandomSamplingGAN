@@ -1,7 +1,10 @@
+#global imports
 import torch
 import torch.nn as nn
 from torch.nn.utils import spectral_norm
-from util import warmup_spectral_norm
+
+#local imports
+from main.util import warmup_spectral_norm
 
 class DataDiscriminator(torch.nn.Module):
     def __init__(self,

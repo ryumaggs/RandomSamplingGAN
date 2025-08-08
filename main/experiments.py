@@ -35,46 +35,26 @@ from itertools import combinations
 # For learning
 #runs_consistency_SameData_SameSeen_diffNetwork,Seed:359556
 BATCH_SIZE = 4
-SUBSET_SIZE = 32
+SUBSET_SIZE = 128
 GENERATOR_TRAINING_FACTOR = 1
-DISCRIMINATOR_TRAINING_FACTOR = 8
+DISCRIMINATOR_TRAINING_FACTOR = 200
 GT_LIMIT = 25000
-BIAS_LIMIT = 2000
-LAMBDAGP = 0
+BIAS_LIMIT = 2500
+LAMBDAGP = 10
 LAMBDAW = 1 #40
 LAMBDAD = 1
-GENERATOR_LEARNING_RATE = 1e-5 #5e-6
-DISCRIMINATOR_LEARNING_RATE = 1e-5 #1e-6
+GENERATOR_LEARNING_RATE = 1e-5
+DISCRIMINATOR_LEARNING_RATE = 1e-4
 BATCHS_IN_EPOCH = 1
-EPOCHS = 300 # the stream is infinite so one epoch will be defined as BATCHS_IN_EPOCH * BATCH_SIZE
-NUM_TRIALS = 1
-GEN_HISTORY_LENGTH = 1
+EPOCHS = 100 # the stream is infinite so one epoch will be defined as BATCHS_IN_EPOCH * BATCH_SIZE
+NUM_TRIALS = 9
+GEN_HISTORY_LENGTH = 30
+WARMUP_EPOCHS = 600
 
 SAME_DATA_GT = False
 SAME_DATA_BIAS = False
 SAME_DATA_SEEN = False
-SAME_NETWORK_INIT = True
-#
-fixed_seed = [np.random.randint(0,1e6)]
-all_rngs = []
-print('SETTING SEED: ', fixed_seed)
-if type(fixed_seed) == list:
-    for _ in range(NUM_TRIALS):
-        t_rng = []
-        for seed in fixed_seed:
-            t_rng.append(set_seed(seed,
-                                    device,
-                                data_init=[SAME_DATA_GT, SAME_DATA_BIAS],
-                                data_gen =SAME_DATA_SEEN,
-                                network_init=SAME_NETWORK_INIT,))
-        all_rngs.append(t_rng)
-else:
-    for _ in range(NUM_TRIALS):
-        all_rngs.append(set_seed(fixed_seed,
-                                device,
-                            data_init=[SAME_DATA_GT, SAME_DATA_BIAS],
-                            data_gen =SAME_DATA_SEEN,
-                            network_init=SAME_NETWORK_INIT,))
+SAME_NETWORK_INIT = False
 
 DEBUG_MODE = True
 
@@ -84,6 +64,7 @@ if DEBUG_MODE:
     DISCRIMINATOR_TRAINING_FACTOR = 5
     EPOCHS = 10
     NUM_TRIALS = 1
+    WARMUP_EPOCHS = 20
 
 SAVE_EVERY = None
 
@@ -120,9 +101,46 @@ Experiments to be done:
 def train(census_dataset_path,
           survey_dataset_path,
           save_path,
-          log_path,):
+          save_dataset,
+          save_weights,
+          num_trials):
+    '''
+    census_dataset_path- str, path to census data csv
+    survey_dataset_path- str, path to survey data csv
+    save_path - str- directory path to folder to save
+    '''
+    print("STARTING TRAINING OF", num_trials, " TOTAL RUNS")
+    #create save path if doesnt eixst
+    if not os.path.isdir(save_path):
+        os.mkdir(save_path)
+    
+    fixed_seed = [np.random.randint(0,1e6)]
+    all_rngs = []
+    print('SETTING SEED: ', fixed_seed)
+    if type(fixed_seed) == list:
+        for _ in range(num_trials):
+            t_rng = []
+            for seed in fixed_seed:
+                t_rng.append(set_seed(seed,
+                                        device,
+                                    data_init=[SAME_DATA_GT, SAME_DATA_BIAS],
+                                    data_gen =SAME_DATA_SEEN,
+                                    network_init=SAME_NETWORK_INIT,))
+            all_rngs.append(t_rng)
+    else:
+        for _ in range(num_trials):
+            all_rngs.append(set_seed(fixed_seed,
+                                    device,
+                                data_init=[SAME_DATA_GT, SAME_DATA_BIAS],
+                                data_gen =SAME_DATA_SEEN,
+                                network_init=SAME_NETWORK_INIT,))
 
-    hparams = {
+    for tid in range(num_trials):
+        print("-----------------------------------")
+        print("RUN:", tid+1, "/", num_trials)
+        print("")
+        rngs = all_rngs[tid][0]
+        hparams = {
         "glearningrate": GENERATOR_LEARNING_RATE,
         "dlearningrate": DISCRIMINATOR_LEARNING_RATE,
         "gen_layers": GEN_LAYERS,
@@ -139,21 +157,19 @@ def train(census_dataset_path,
         "lambdad": LAMBDAD,
         "tau": TEMPERATURE,
         "gen_history_length": GEN_HISTORY_LENGTH,
+        "epochs": EPOCHS,
+        "warmup_epochs": WARMUP_EPOCHS,
     }
-    
-    if type(all_rngs) == list:
-        rngs = all_rngs[0]
-
-    d = HouseholdPulse_dataset(ground_truth_path=census_dataset_path,
-                    bias_path = survey_dataset_path,
-                    rngs=rngs,
-                    device=device,
-                    columns_to_keep = None,
-                    gt_limit = GT_LIMIT,
-                    bias_limit = BIAS_LIMIT, 
-                    )
-
-    gan = WGAN_GP(
+        
+        d = HouseholdPulse_dataset(ground_truth_path=census_dataset_path,
+                        bias_path = survey_dataset_path,
+                        rngs=rngs,
+                        device=device,
+                        columns_to_keep = None,
+                        gt_limit = GT_LIMIT,
+                        bias_limit = BIAS_LIMIT, 
+                        )
+        gan = WGAN_GP(
                 rngs=rngs,
                 dataset=d,
                 generator_type='deepSet',
@@ -168,37 +184,43 @@ def train(census_dataset_path,
                 lambda_gp=hparams["lambdagp"],
                 lambda_weights=hparams["lambdaw"],
                 lambda_demo=hparams["lambdad"],
+                gen_history_length=hparams["gen_history_length"],
                 temperature=hparams["tau"],
                 warmup_length=hparams["wudur"],
                 lambda_regularizer=0,
                 generator_dropout=hparams["generator_dropout"],
                 discriminator_dropout=hparams["discriminator_dropout"],
+                save_dataset=save_dataset,
+                save_weights=save_weights,
+                save_dir = save_path,
             )
 
-    writer = SummaryWriter(comment="")
-    
-    for key, item in hparams.items():
-        if isinstance(item, list):
-            hparams[key] = str(hparams[key])
-    
-    writer.add_hparams(hparams,{})
+        writer = SummaryWriter(comment="")
+        
+        for key, item in hparams.items():
+            if isinstance(item, list):
+                hparams[key] = str(hparams[key])
+        
+        writer.add_hparams(hparams,{})
 
-    weights, bias_labels, prob_diffs,  test_probs, test_prob_diffs, generator_losses, discriminator_losses  = gan.train(BATCHS_IN_EPOCH,
-                                                                                                                EPOCHS,
-                                                                                                                TEMPERATURE_START,
-                                                                                                                TEMPERATURE_END,
-                                                                                                                hparams['gtrainingfactor'],
-                                                                                                                hparams['dtrainingfactor'],
-                                                                                                                SAVE_EVERY,
-                                                                                                                writer)
-    predicted_target = (weights @ bias_labels).item()
-    
-    #results.append((exp_var,cvar,predicted_target))
+        weights, bias_labels, prob_diffs,  test_probs, test_prob_diffs, generator_losses, discriminator_losses  = gan.train(BATCHS_IN_EPOCH,
+                                                                                                                                    hparams['epochs'],
+                                                                                                                                    hparams['warmup_epochs'],
+                                                                                                                                    TEMPERATURE_START,
+                                                                                                                                    TEMPERATURE_END,
+                                                                                                                                    hparams['gtrainingfactor'],
+                                                                                                                                    hparams['dtrainingfactor'],
+                                                                                                                                    SAVE_EVERY,
+                                                                                                                                    writer,
+                                                                                                                                    tid)
+        predicted_target = (weights @ bias_labels).item()
+        
+        #results.append((exp_var,cvar,predicted_target))
 
-    #with open('./results.pkl', 'wb') as file:
-    #    pickle.dump(results,file)
-    writer.close()
+        #with open('./results.pkl', 'wb') as file:
+        #    pickle.dump(results,file)
+        writer.close()
 
-#rename the runs folder into its appropriate name
-#if NUM_TRIALS > 1:
-#    os.rename("./runs", "./runs_week"+str(w))
+    #rename the runs folder into its appropriate name
+    #if NUM_TRIALS > 1:
+    #    os.rename("./runs", "./runs_week"+str(w))
