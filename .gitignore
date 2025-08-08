@@ -12,3 +12,5 @@ train_log.log
 haoxing/
 DiscriminatorSimpleRuns/
 runs_300_all_vars_JSD_LOSS/
+saves_to_share/
+UncheckedRuns/
