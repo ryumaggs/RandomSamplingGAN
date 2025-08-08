@@ -17,19 +17,21 @@ from datetime import datetime
 import logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(filename='train_log.log', level=logging.INFO)
+import pandas as pd
+from sklearn import preprocessing
+import pytorch_warmup as warmup
+import pickle
 
+#local imports
 from main.Dataset import Axios_ipsosdataset, HouseholdPulse_dataset, D4P_dataset, HouseholdPulse_synthetic, Ari_dataset
 from main.GAN import GAN, WGAN_GP, WGAN_GP_fict
 from main.Discriminator import DataDiscriminator
 from main.util import set_seed
-import itertools
-import pandas as pd
+from DataProcessing.GeneralDataProcessing import *
+
 #optimize over w directly, dont use any theta shenannigans. 
-from sklearn import preprocessing
-import pytorch_warmup as warmup
-from DataProcessing import *
-import pickle
-from itertools import combinations
+
+
 
 #NEW TRAINING VARIABLE SET UP
 # For learning
