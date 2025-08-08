@@ -1,8 +1,6 @@
-#global imports
 import torch
 import numpy as np
 import random
-
 def dict2vector(input):
     if type(input) == dict:
         vectors = []
