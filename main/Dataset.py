@@ -132,8 +132,8 @@ class HouseholdPulse_dataset():
         self.num_labels = num_labels
         raw_bias_load = self.load_csv(bias_path)#.to_numpy(dtype=np.float, na_value=0)
         raw_gt_load = self.load_csv(ground_truth_path)
+        print("Raw Survey Data Loaded Snippet (Pre-sampling):")
         print(raw_bias_load[:5])
-
         self.num_categories_per_features = [raw_gt_load[col].nunique() for col in raw_gt_load.columns]
         self.num_categories_per_features = self.num_categories_per_features[1:]
 
@@ -165,6 +165,7 @@ class HouseholdPulse_dataset():
         self.synthetic_label_1 = None
         self.synthetic_label_2 = None
         self.var_setup()
+        
     
     def var_setup_onhold(self):
         self.biased_labels = self.biased_dataset[:,0]

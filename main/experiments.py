@@ -13,7 +13,7 @@ from scipy.special import softmax
 device = torch.device('cuda:0')
 import random
 import os
-
+from datetime import datetime
 import logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(filename='train_log.log', level=logging.INFO)
@@ -34,8 +34,8 @@ from itertools import combinations
 #NEW TRAINING VARIABLE SET UP
 # For learning
 #runs_consistency_SameData_SameSeen_diffNetwork,Seed:359556
-BATCH_SIZE = 4
-SUBSET_SIZE = 128
+BATCH_SIZE = 2
+SUBSET_SIZE = 32
 GENERATOR_TRAINING_FACTOR = 1
 DISCRIMINATOR_TRAINING_FACTOR = 200
 GT_LIMIT = 25000
@@ -47,8 +47,8 @@ GENERATOR_LEARNING_RATE = 1e-5
 DISCRIMINATOR_LEARNING_RATE = 1e-4
 BATCHS_IN_EPOCH = 1
 EPOCHS = 100 # the stream is infinite so one epoch will be defined as BATCHS_IN_EPOCH * BATCH_SIZE
-NUM_TRIALS = 9
-GEN_HISTORY_LENGTH = 30
+NUM_TRIALS = 1
+GEN_HISTORY_LENGTH = 0
 WARMUP_EPOCHS = 600
 
 SAME_DATA_GT = False
@@ -134,7 +134,6 @@ def train(census_dataset_path,
                                 data_init=[SAME_DATA_GT, SAME_DATA_BIAS],
                                 data_gen =SAME_DATA_SEEN,
                                 network_init=SAME_NETWORK_INIT,))
-
     for tid in range(num_trials):
         print("-----------------------------------")
         print("RUN:", tid+1, "/", num_trials)
@@ -169,6 +168,7 @@ def train(census_dataset_path,
                         gt_limit = GT_LIMIT,
                         bias_limit = BIAS_LIMIT, 
                         )
+        
         gan = WGAN_GP(
                 rngs=rngs,
                 dataset=d,
@@ -195,7 +195,16 @@ def train(census_dataset_path,
                 save_dir = save_path,
             )
 
-        writer = SummaryWriter(comment="")
+        comment = "runs"
+        base_logdir = "./saves"
+
+        log_dir = os.path.join(
+            base_logdir,
+            comment,
+            datetime.now().strftime("%Y%m%d-%H%M%S")
+        )
+
+        writer = SummaryWriter(log_dir=log_dir)
         
         for key, item in hparams.items():
             if isinstance(item, list):
