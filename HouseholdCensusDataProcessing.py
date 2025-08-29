@@ -24,6 +24,35 @@ def filter_questions(input_file, output_file):
     df_filtered.to_csv(output_file, index=False, encoding="ISO-8859-1")
     print(f"Filtered data saved to {output_file}")
 
+def ensure_zero_based_categories(df, col):
+    """
+    Ensures that a numeric column in a DataFrame representing categories
+    has values starting at 0. If not, recodes so that the smallest value becomes 0.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The DataFrame containing the column.
+    col : str
+        The column name to check and fix.
+
+    Returns
+    -------
+    pd.DataFrame
+        The DataFrame with the updated column.
+    """
+    if not pd.api.types.is_numeric_dtype(df[col]):
+        raise ValueError(f"Column '{col}' must be numeric to represent categories.")
+
+    min_val = df[col].min()
+    if min_val > 0:
+        df[col] = df[col] - min_val
+        print(f"Column '{col}' recoded to start at 0.")
+    else:
+        print(f"Column '{col}' already starts at 0.")
+    
+    return df
+
 def recoding_survey_and_census_data(survey_df, census_df, target_var):
 
     '''
@@ -116,27 +145,27 @@ def recoding_survey_and_census_data(survey_df, census_df, target_var):
         
         def recode_census_age(value):
             if YEAR - value >= 85: 
-                return 5
-            elif YEAR - value >= 65:
                 return 4
-            elif YEAR - value >= 50:
+            elif YEAR - value >= 65:
                 return 3
-            elif YEAR - value >= 35:
+            elif YEAR - value >= 50:
                 return 2
-            elif YEAR - value >= 18:
+            elif YEAR - value >= 35:
                 return 1
+            elif YEAR - value >= 18:
+                return 0
         survey_df['TBIRTH_YEAR'] = survey_df['TBIRTH_YEAR'].apply(recode_census_age)
 
         #region. dont have to do anything i think
 
         #education
         education_mapping = {
-            1: 1,  # Less than high school
-            2: 1,  # Less than high school
-            3: 2,  # High school graduate
-            4: 3,  # Some college
-            6: 4,  # Bachelor’s degree
-            7: 5   # Graduate degree
+            1: 0,  # Less than high school
+            2: 0,  # Less than high school
+            3: 1,  # High school graduate
+            4: 2,  # Some college
+            6: 3,  # Bachelor’s degree
+            7: 4   # Graduate degree
         }
         survey_df['EEDUC'] = survey_df['EEDUC'].map(education_mapping)
 
@@ -171,6 +200,9 @@ def recoding_survey_and_census_data(survey_df, census_df, target_var):
 
         #deleting famsize because the categories are too different
         survey_df = survey_df.filter(items=relevant_columns_local)
+
+        for col in survey_df.columns:
+            ensure_zero_based_categories(survey_df, col)
 
     if census_df is not None:
         #remove anyone with GQ != 1
@@ -297,6 +329,9 @@ def recoding_survey_and_census_data(survey_df, census_df, target_var):
         #deleting famsize because the categories are too different and BIDENPERC
         census_df = census_df.filter(items=relevant_columns_local)
 
+        for col in census_df.columns:
+            ensure_zero_based_categories(census_df, col)
+            
     return survey_df, census_df
 
 def load_evenly_sampled_csv_rows(directory_path, K, target_var):

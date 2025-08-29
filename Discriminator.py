@@ -1,7 +1,9 @@
 import torch
 import torch.nn as nn
 from torch.nn.utils import spectral_norm
-from util import warmup_spectral_norm
+import sys, os
+sys.path.append(os.path.dirname(__file__))
+from util import warmup_spectral_norm, create_embedding_layers, embed_data
 
 class DataDiscriminator(torch.nn.Module):
     def __init__(self,
@@ -97,89 +99,58 @@ class DeepSetCritic(nn.Module):
                  num_features,
                  dropout,
                  layers,
-                 hidden_dim=256,):
+                 embedding_dict,
+                 hidden_dim=1024,):
         super().__init__()
-        '''
-        Commented code for quick testing
-        '''
-        self.rngs = rngs
-        self.n_power_iterations = 5
-
-        self.rho_0 = spectral_norm(nn.Linear(hidden_dim,hidden_dim))
-        torch.nn.init.xavier_uniform_(self.rho_0.weight, generator=self.rngs['torch']) 
-        torch.nn.init.zeros_(self.rho_0 .bias)
-        self.rho_0.to(torch.device('cuda:0'))
-        self.rho_1 = spectral_norm(nn.Linear(hidden_dim,1))
-        torch.nn.init.xavier_uniform_(self.rho_1.weight, generator=self.rngs['torch']) 
-        torch.nn.init.zeros_(self.rho_1 .bias)
-        self.rho_1.to(torch.device('cuda:0'))
-
+        self.embedding_dict = embedding_dict
+        self.embedding_layers = create_embedding_layers(self.embedding_dict,torch.device('cuda:0'))
         
-        if False:
-            phi_layers = []
-            rho_layers = []
-            if len(layers) == 0:
-                #empty layers list
-                phi_layers.append(spectral_norm(nn.Linear(num_features,hidden_dim),n_power_iterations=self.n_power_iterations))
-                phi_layers.append(nn.Identity())
-
-                rho_layers.append(spectral_norm(nn.Linear(hidden_dim, 1),n_power_iterations=self.n_power_iterations))
-                rho_layers.append(nn.Identity())
-            else:
-                #populated layers list - first layer
-                phi_layers.append(spectral_norm(nn.Linear(num_features,layers[0]),n_power_iterations=self.n_power_iterations))
-                phi_layers.append(nn.LeakyReLU(0.2))
-                phi_layers.append(nn.Dropout(dropout))
-
-                rho_layers.append(spectral_norm(nn.Linear(hidden_dim,layers[0]),n_power_iterations=self.n_power_iterations))
-                rho_layers.append(nn.LeakyReLU(0.2))
-                rho_layers.append(nn.Dropout(dropout))
-                for i,l in enumerate(layers):
-                    if i+1 >= len(layers): #last layer
-                        phi_layers.append(spectral_norm(nn.Linear(l,hidden_dim),n_power_iterations=self.n_power_iterations))
-                        phi_layers.append(nn.Identity())
-
-                        rho_layers.append(spectral_norm(nn.Linear(l,1),n_power_iterations=self.n_power_iterations))
-                        rho_layers.append(nn.Identity())
-                    else:
-                        phi_layers.append(spectral_norm(nn.Linear(l,layers[i+1]),n_power_iterations=self.n_power_iterations))
-                        #phi_layers.append(nn.LayerNorm(layers[i+1]))
-                        phi_layers.append(nn.LeakyReLU(0.2))
-                        phi_layers.append(nn.Dropout(dropout))
-
-                        rho_layers.append(spectral_norm(nn.Linear(l,layers[i+1]),n_power_iterations=self.n_power_iterations))
-                        #rho_layers.append(nn.LayerNorm(layers[i+1]))
-                        rho_layers.append(nn.LeakyReLU(0.2))
-                        rho_layers.append(nn.Dropout(dropout))
+        self.rngs = rngs
 
         phi_layers = []
-        #phi_layers.append(spectral_norm(nn.Linear(num_features,hidden_dim),n_power_iterations=self.n_power_iterations))
-        phi_layers.append(nn.Linear(num_features,hidden_dim))
-        phi_layers.append(nn.LeakyReLU(0.2))
-        phi_layers.append(nn.Linear(hidden_dim,hidden_dim))
-        phi_layers.append(nn.Identity())
-        #phi_layers.append(nn.LayerNorm(hidden_dim))
-
         rho_layers = []
-        rho_layers.append(nn.Linear(hidden_dim,hidden_dim))
-        rho_layers.append(nn.LeakyReLU(0.2))
-        rho_layers.append(nn.Linear(hidden_dim,1))
-        phi_layers.append(nn.Identity())
-        
+        if len(layers) == 0:
+            phi_layers.append(nn.Linear(num_features,hidden_dim))
+            phi_layers.append(nn.Identity())
 
+            rho_layers.append(nn.Linear(hidden_dim, 1))
+            rho_layers.append(nn.Identity())
+        else:
+            phi_layers.append(nn.Linear(num_features,layers[0]))
+            #phi_layers.append(nn.LayerNorm(layers[0]))
+            phi_layers.append(nn.LeakyReLU(0.2))
+            phi_layers.append(nn.Dropout(dropout))
+
+            rho_layers.append(nn.Linear(hidden_dim,layers[0]))
+            #rho_layers.append(nn.LayerNorm(layers[0]))
+            rho_layers.append(nn.LeakyReLU(0.2))
+            rho_layers.append(nn.Dropout(dropout))
+            for i,l in enumerate(layers):
+                if i+1 >= len(layers): #at the end
+                    phi_layers.append(nn.Linear(l,hidden_dim))
+                    phi_layers.append(nn.Identity())
+
+                    rho_layers.append(nn.Linear(l,1))
+                    rho_layers.append(nn.Identity())
+                else:
+                    phi_layers.append(nn.Linear(l,layers[i+1]))
+                    #phi_layers.append(nn.LayerNorm(layers[i+1]))
+                    phi_layers.append(nn.LeakyReLU(0.2))
+                    phi_layers.append(nn.Dropout(dropout))
+
+                    rho_layers.append(nn.Linear(l,layers[i+1]))
+                    #rho_layers.append(nn.LayerNorm(layers[i+1]))
+                    rho_layers.append(nn.LeakyReLU(0.2))
+                    rho_layers.append(nn.Dropout(dropout))
         self.phi = nn.Sequential(*phi_layers)
         self.rho = nn.Sequential(*rho_layers)
+        
 
-        self.init_bias_only(self.phi)
-        self.init_bias_only(self.rho)
-        #self.apply_he_init_to_sequential(self.phi)
-        #self.apply_he_init_to_sequential(self.rho)
+        self.apply_he_init_to_sequential(self.phi)
+        self.apply_he_init_to_sequential(self.rho)
         
         self.phi.to(torch.device('cuda:0'))
         self.rho.to(torch.device('cuda:0'))
-
-        warmup_spectral_norm(self.phi, input_shape=(1,1,num_features))
-        warmup_spectral_norm(self.rho, input_shape=(1,1,hidden_dim))
 
     def init_bias_only(self,model):
         for layer_id, layer in enumerate(model):
@@ -208,6 +179,8 @@ class DeepSetCritic(nn.Module):
                     torch.nn.init.zeros_(layer.bias)
 
     def forward(self, x):  # x: [N, 8]
+        #embed data
+        #x = embed_data(self.embedding_layers,self.embedding_dict,x)
         # x: [batch_size, set_size, input_dim]
         x = self.phi(x)         # [B, 32, H]
         x = x.mean(dim=1)        # [B, H] — permutation-invariant pooling

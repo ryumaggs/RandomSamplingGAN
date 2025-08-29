@@ -5,7 +5,7 @@ from tqdm import tqdm
 from scipy.special import softmax
 import pandas as pd
 import torch
-from util import dict2vector, normalize_to_minus1_plus1
+from util import dict2vector, normalize_to_minus1_plus1, embed_data
 from DataProcessing import *
 from sklearn.preprocessing import StandardScaler
 from HouseholdCensusDataProcessing import *
@@ -128,11 +128,10 @@ class HouseholdPulse_dataset():
         self.num_labels = num_labels
         raw_bias_load = self.load_csv(bias_path)#.to_numpy(dtype=np.float, na_value=0)
         raw_gt_load = self.load_csv(ground_truth_path)
-        print(raw_bias_load[:5])
-
+        self.embedding_dict = self.create_embedding_dictionary(raw_gt_load)
         self.num_categories_per_features = [raw_gt_load[col].nunique() for col in raw_gt_load.columns]
         self.num_categories_per_features = self.num_categories_per_features[1:]
-
+        
         if type(rngs) == list:
             gt_list = []
             bd_list = []
@@ -157,11 +156,21 @@ class HouseholdPulse_dataset():
                                                                 rngs)
         del raw_gt_load
         del raw_bias_load 
-        
         self.synthetic_label_1 = None
         self.synthetic_label_2 = None
         self.var_setup()
     
+    def create_embedding_dictionary(self,df):
+        unique_counts = df.nunique().to_dict()
+        del unique_counts['PERWT']
+        uc = {}
+        for i, name in enumerate(unique_counts):
+            if unique_counts[name] <= 20:
+                uc[i] = ["onehot", unique_counts[name], unique_counts[name]]
+            else:
+                uc[i] = ["embed", unique_counts[name], min(50, int((unique_counts[name]+1) **0.5))]
+        return uc
+        
     def var_setup_onhold(self):
         self.biased_labels = self.biased_dataset[:,0]
         print("uniform avg target: ", sum(self.biased_labels)/len(self.biased_labels))
@@ -184,33 +193,23 @@ class HouseholdPulse_dataset():
     def var_setup(self):
         self.biased_labels = self.biased_dataset[:,:self.num_labels]
         for nl in range(self.num_labels):
-            print("uniform avg target: ", sum(self.biased_labels[nl])/len(self.biased_labels[nl]))
+            print("uniform avg target: ", sum(self.biased_labels[:,nl])/len(self.biased_labels[:,nl]))
         self.unscaled_ground_truth = self.ground_truth_dataset[:,1:]
         self.unscaled_biased = self.biased_dataset[:,1:]
-        test = np.concatenate((self.ground_truth_dataset[:,1:],self.biased_dataset[:,1:]))
-        self.scaler = StandardScaler()        
-        #self.scaler = self.scaler.fit(self.ground_truth_dataset[:,1:])
-        self.scaler = self.scaler.fit(test)
-        self.ground_truth_dataset = self.scaler.transform(self.ground_truth_dataset[:,1:])
-        self.biased_dataset = self.scaler.transform(self.biased_dataset[:,1:])
+
         self.ground_truth = None
         self.ground_truth_demographics = None
-
-        self.bin_centers = self.compute_bin_centers(self.scaler, 
-                                                    self.num_categories_per_features,
-                                                    device=self.device)
-
-        #self.unscaled_ground_truth, self.unscaled_biased = self.create_combination_id_mapping(self.unscaled_ground_truth,
-        #                                                                                      self.unscaled_biased)
-        #bias has axios weights in column 0 and vaccinated status in column -1
-        #gt has census weights in column 0
+        
         self.gt_cpu = self.ground_truth_dataset
         self.bias_cpu = self.biased_dataset
 
-        self.ground_truth_dataset = torch.tensor(self.ground_truth_dataset,device=self.device,dtype=torch.float32)
-        self.biased_dataset = torch.tensor(self.biased_dataset,device=self.device,dtype=torch.float32)
+        self.ground_truth_dataset = torch.tensor(self.ground_truth_dataset[:,1:],device=self.device,dtype=torch.float32)
+        self.biased_dataset = torch.tensor(self.biased_dataset[:,1:],device=self.device,dtype=torch.float32)
 
-    def compute_bin_centers(self, scaler, num_bins_per_feature, device="cpu"):
+        self.ground_truth_dataset = embed_data(None,self.embedding_dict,self.ground_truth_dataset)
+        self.biased_dataset = embed_data(None,self.embedding_dict,self.biased_dataset).unsqueeze(0)
+
+    def compute_bin_centers_DEPRICATED(self, scaler, num_bins_per_feature, device="cpu"):
         """
         Compute standardized bin centers for categorical features whose original bin values start at 1.
 
@@ -315,23 +314,24 @@ class HouseholdPulse_synthetic(HouseholdPulse_dataset):
         '''
         column_names - list[str] - len(2) - 2 valid column names in the ground_truth dataset 
         '''
+        self.num_labels = 0
         self.type = 'real'
         self.device = device
         self.gt_limit = gt_limit
         self.bias_limit = bias_limit
-        rng = rngs[0]
+        rng = rngs
         raw_gt_load = self.load_csv(ground_truth_path)
         self.ground_truth_dataset = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rng['seed_gt'])
-
+        self.embedding_dict = self.create_embedding_dictionary(raw_gt_load)
         self.num_categories_per_features = [raw_gt_load[col].nunique() for col in raw_gt_load.columns]
         self.num_categories_per_features = self.num_categories_per_features[1:]
 
         #pick two random variables
         all_columns = list(self.ground_truth_dataset.columns)
         indexes = np.arange(len(all_columns))[1:]
-        var_1_index = 4 #np.random.choice(indexes)
+        var_1_index = np.random.choice(indexes)
         indexes = indexes[indexes != var_1_index]
-        var_2_index = 1 #np.random.choice(indexes)
+        var_2_index = np.random.choice(indexes)
         var_1 = all_columns[var_1_index]
         var_2 = all_columns[var_2_index]
         self.column_names = [var_1, var_2] #store selected columns for use at :355
@@ -351,8 +351,12 @@ class HouseholdPulse_synthetic(HouseholdPulse_dataset):
         self.upscaled_cell = [rand_x, rand_y]
 
         #Resample new joint after upscaling cell by epsilon
-        epsilon = 0.5
+        p = joint_np[rand_x, rand_y]
+        # Random perturbation: about ±25–50% of the cell's current value
+        epsilon = np.random.uniform(0.5,1)
+        #epsilon = 0.5
         joint_np[rand_x, rand_y] += epsilon
+        joint_np = np.clip(joint_np, 0.01, None)   # keep non-negative
         joint_np /= joint_np.sum()  # Renormalize
         new_joint_distr = self.resample_df_with_joint_distribution(self.column_names, self.ground_truth_dataset, joint_np, x_vals, y_vals, bias_limit)
         #experimental
@@ -363,8 +367,45 @@ class HouseholdPulse_synthetic(HouseholdPulse_dataset):
         self.ground_truth_dataset = self.ground_truth_dataset.to_numpy(dtype=np.float, na_value=0)
 
         self.var_setup()
+        self.add_random_noise()
 
-        
+    def add_random_noise(self):
+        categories_list = [np.random.randint(2,9) for _ in range(len(self.embedding_dict))]
+        #add random noise and augments embedding dict
+        random_gt = self.create_random_categories(self.unscaled_ground_truth.shape[0],
+                                                  categories_list=categories_list,
+                                                  m = 'gt')
+        random_bias = self.create_random_categories(self.unscaled_biased.shape[0],
+                                                    categories_list=categories_list,
+                                                    m = 'bias',
+                                                    add_to_embedding_dict=False).unsqueeze(0)
+        self.ground_truth_dataset = torch.concat((self.ground_truth_dataset,random_gt.to(self.device)),dim=-1)
+        self.biased_dataset = torch.concat((self.biased_dataset,random_bias.to(self.device)),dim=-1)
+
+    def create_random_categories(self,num_points,
+                                 categories_list,
+                                 m,
+                                 add_to_embedding_dict=True):
+        new_features = []
+        locked_len = len(self.embedding_dict)
+        for new_i in range(len(categories_list)):
+            num_categories = categories_list[new_i]   # between 2 and 8 inclusive
+            new_col = np.random.randint(0, num_categories, size=num_points)
+            if m == 'gt':
+                self.unscaled_ground_truth = np.column_stack((self.unscaled_ground_truth,new_col))
+            else:
+                self.unscaled_biased = np.column_stack((self.unscaled_biased,new_col))
+            new_features.append(new_col)
+            if add_to_embedding_dict:
+                self.embedding_dict[new_i+locked_len] = ['onehot', num_categories, num_categories]
+        new_features = torch.tensor(np.column_stack(new_features))
+        if add_to_embedding_dict:
+            new_features = embed_data(None,self.embedding_dict,new_features,overrite_start_idx=locked_len)
+        else:
+            new_features = embed_data(None,self.embedding_dict,new_features,overrite_start_idx=locked_len//2)
+
+        return new_features
+
     def has_missing_joints(self, df, col_i='col_i', col_j='col_j'):
         unique_i = df[col_i].unique()
         unique_j = df[col_j].unique()

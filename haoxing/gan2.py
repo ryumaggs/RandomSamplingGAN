@@ -23,11 +23,6 @@ class Generator(nn.Module):
         
         modules = []
         modules.append(nn.Linear(input_size,self.num_hidden))
-        #modules.append(nn.LeakyReLU())
-        #modules.append(nn.Dropout(0.1))
-        #modules.append(nn.Linear(self.num_hidden,self.num_hidden))
-        #modules.append(nn.LeakyReLU())
-        #modules.append(nn.Dropout(0.1))
         modules.append(nn.Linear(self.num_hidden,1))
         self.linear = nn.Sequential(*modules)
         for layer_id, layer in enumerate(self.linear):

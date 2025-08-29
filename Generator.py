@@ -1,7 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import sys, os
+sys.path.append(os.path.dirname(__file__))
 
+from util import embed_data, create_embedding_layers
 
 class onesGen(torch.nn.Module):
     '''
@@ -175,12 +178,17 @@ class DeepSetNet(nn.Module):
                  sample_size,
                  dropout,
                  temperature,
+                 embedding_dict,
                  batch_size=1,
                  hidden_dim=1024,):
         '''
         commented code for fast experimentation
         '''
         super().__init__()
+        self.embedding_dict = embedding_dict
+        self.embedding_layers = create_embedding_layers(self.embedding_dict,torch.device('cuda:0'))
+        
+        
         self.batch_size = batch_size
         self.sample_size = sample_size
         self.temperature = temperature
@@ -222,10 +230,11 @@ class DeepSetNet(nn.Module):
                     rho_layers.append(nn.Dropout(dropout))
         self.phi = nn.Sequential(*phi_layers)
         self.rho = nn.Sequential(*rho_layers)
+        
 
         self.apply_he_init_to_sequential(self.phi)
         self.apply_he_init_to_sequential(self.rho)
-
+        
         self.phi.to(torch.device('cuda:0'))
         self.rho.to(torch.device('cuda:0'))
 
@@ -249,38 +258,45 @@ class DeepSetNet(nn.Module):
                     torch.nn.init.uniform_(layer.weight, a=0.0, b=1.0, generator=self.rngs['torch'])  # or any init you prefer
                     torch.nn.init.zeros_(layer.bias)
 
-    def forward(self, dataset, batch_override=None):  # x: [N, 8]
+    def forward(self, dataset, batch_override=None): 
         bs = self.batch_size
+        #handle embeddings
+        #x = embed_data(self.embedding_layers,self.embedding_dict,dataset.unsqueeze(0))
         if batch_override:
             bs = batch_override
-        x_phi = self.phi(dataset)                     # [N, hidden_dim]
-        global_context = x_phi.mean(dim=0, keepdim=True)  # [1, hidden_dim]
+        x_phi = self.phi(dataset)                     
+        global_context = x_phi.mean(dim=1, keepdim=True) 
         x_rho = self.rho(x_phi + global_context)          # [N, 1]
-        logits = x_rho.squeeze(1)
+        logits = x_rho.squeeze(2)
+        #temp log layer for testing
+        #logits = torch.log(logits)
+
         #probs = F.softmax(x_rho.squeeze(-1), dim=0)       # [N]
-        logits = logits.unsqueeze(0).repeat((self.sample_size*bs,1))
+        logits_rep = logits.repeat((self.sample_size*bs,1))
         #matrix = F.gumbel_softmax(logits, tau=self.temperature, hard=False, dim=1) # give index
         # manual gumbel softmax
-        gumbels = -torch.empty_like(logits, memory_format=torch.legacy_contiguous_format).exponential_(generator=self.rngs['torch_cuda']).log()
+        gumbels = -torch.empty_like(logits_rep, memory_format=torch.legacy_contiguous_format).exponential_(generator=self.rngs['torch_cuda']).log()
         # Apply the Gumbel-Softmax transformation
-        y = (logits + gumbels) / self.temperature
+        y = (logits_rep + gumbels) / self.temperature
         matrix = y.softmax(dim=-1)
         output = torch.matmul(matrix, dataset)
-        output = output.reshape(bs,self.sample_size,dataset.shape[1])
-        return output, matrix.detach(), logits[0].detach().cpu()
-    
+        output = output.reshape(bs,self.sample_size,dataset.shape[2])
+        return output, matrix.detach(), logits
+
     def get_weights(self, dataset):
         with torch.no_grad():
+            #x = embed_data(self.embedding_layers,self.embedding_dict,dataset.unsqueeze(0))
             x_phi = self.phi(dataset)                     # [N, hidden_dim]
             global_context = x_phi.mean(dim=0, keepdim=True)  # [1, hidden_dim]
-            x_rho = self.rho(x_phi + global_context).T          # [1, N]
+            x_rho = self.rho(x_phi + global_context).squeeze().unsqueeze(0)            # [1, N]
             output = F.softmax(x_rho, dim=1)       # [N]
         return output.cpu().numpy()
     
     def get_weights_regularizer(self, dataset):
+        #x = embed_data(self.embedding_layers,self.embedding_dict,dataset.unsqueeze(0))
         x_phi = self.phi(dataset)                     # [N, hidden_dim]
         global_context = x_phi.mean(dim=0, keepdim=True)  # [1, hidden_dim]
-        x_rho = self.rho(x_phi + global_context).T          # [1, N]
+        x_rho = self.rho(x_phi + global_context).squeeze().unsqueeze(0)          # [1, N]
         output = F.softmax(x_rho, dim=1)       # [N]
         return output
     
