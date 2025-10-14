@@ -146,7 +146,11 @@ class GAN():
                                         actual_input=self.bias_dataset.squeeze(0),
                                         num_steps=50,
                                         unsqueeze=True)
-        mean_grad = compute_IG(all_inputs,self,network='generator')
+        mean_grad = compute_IG_corrected(all_inputs=all_inputs,
+                                         baseline_input=torch.mean(self.ground_truth_dataset,dim=0),
+                                         actual_input=self.bias_dataset.squeeze(0),
+                                         gan=self,
+                                         network='generator')
         self.input_grad_history.append(mean_grad)
 
     def compute_input_gradient_disc(self):
@@ -159,25 +163,12 @@ class GAN():
                                         actual_input=critic_actual_input,
                                         num_steps=50,
                                         unsqueeze=True)
-        mean_grad_critic = compute_IG(all_inputs_critic,self,network='critic')
+        mean_grad_critic = compute_IG_corrected(all_inputs=all_inputs_critic,
+                                         baseline_input=torch.mean(self.ground_truth_dataset,dim=0),
+                                         actual_input=critic_actual_input,
+                                         gan=self,
+                                         network='critic')
         self.critic_input_grad_history.append(mean_grad_critic)
-
-    def compute_input_gradient_OLD(self):
-        X_for_grad = self.bias_dataset.detach().clone().requires_grad_(True)
-
-        # Forward pass through G then D
-        sds, selected_indices, weights = self.generator(X_for_grad)
-        score = self.discriminator(sds).sum()  # scalar score
-
-        # Compute gradient of score w.r.t. generator input
-        grad_input = torch.autograd.grad(
-            outputs=score,
-            inputs=X_for_grad,
-            retain_graph=False,
-            create_graph=False
-        )[0].detach()  # shape: (2500, 7)
-
-        self.input_grad_history.append(grad_input.cpu().numpy())
     
     def reset_discriminator(self):
         if self.discriminator_type == 'standard':
