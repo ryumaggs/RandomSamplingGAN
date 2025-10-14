@@ -40,7 +40,7 @@ BATCH_SIZE = 2
 SUBSET_SIZE = 32
 GENERATOR_TRAINING_FACTOR = 1
 DISCRIMINATOR_TRAINING_FACTOR = 8
-GT_LIMIT = 25000
+GT_LIMIT = 125000
 BIAS_LIMIT = 2500
 
 LAMBDAGP = 10
@@ -51,7 +51,7 @@ GENERATOR_LEARNING_RATE = 1e-5
 DISCRIMINATOR_LEARNING_RATE = 1e-4
 BATCHS_IN_EPOCH = 1
 EPOCHS = 300 
-NUM_TRIALS = 100
+NUM_TRIALS = 30
 GEN_HISTORY_LENGTH = 0
 WARMUP_EPOCHS = 0
 SAVE_DATASET = False
@@ -64,7 +64,7 @@ TEMPERATURE_START = 1
 TEMPERATURE_END = 0.3
 TEMPERATURE = 0.1
 
-DEBUG_MODE = False
+DEBUG_MODE = True
 
 if DEBUG_MODE:
     BATCH_SIZE=2
@@ -134,8 +134,8 @@ def check_identical_networks(gan1, gan2):
     print("Discriminator rhos: ", all(torch.equal(p1, p2) for p1, p2 in zip(gan1.discriminator.rho.parameters(), gan2.discriminator.rho.parameters())))
     print("Discriminator phis: ", all(torch.equal(p1, p2) for p1, p2 in zip(gan1.discriminator.phi.parameters(), gan2.discriminator.phi.parameters())))
 
-#weeks = list(range(29,30))
-weeks = ['Syn']
+weeks = list(range(29,30))
+#weeks = ['Syn']
 #weeks = ['ALL']
 #weeks = list(range(29,30)) + ['ALL']
 if __name__ == "__main__":
@@ -226,6 +226,14 @@ if __name__ == "__main__":
                                     bias_limit = BIAS_LIMIT, 
                                     )
 
+                    d = HouseholdPulse_synthetic(ground_truth_path='./data/censusHouseholdPulse_data/cleaned/ipums_cleaned.csv',
+                                    bias_path = './data/censusHouseholdPulse_data/cleaned/pulse_week'+week+'_cleaned.csv',
+                                    rngs=rngs,
+                                    device=device,
+                                    gt_limit = GT_LIMIT*len(rngs),
+                                    bias_limit = BIAS_LIMIT, 
+                                    )
+
                     d = Ari_dataset(ground_truth_path='./data/ari_survey/ipums_cleaned.csv',
                                     bias_path = './data/ari_survey/aricleaned.csv',
                                     rngs=rngs,
@@ -261,11 +269,12 @@ if __name__ == "__main__":
                     if type(rngs) == list:
                         rngs = rngs[0]
                     
-                    d = HouseholdPulse_synthetic(ground_truth_path='./data/censusHouseholdPulse_data/cleaned/ipums_cleaned.csv',
+                    d = HouseholdPulse_dataset(ground_truth_path='./data/censusHouseholdPulse_data/cleaned/ipums_cleaned.csv',
                                     bias_path = './data/censusHouseholdPulse_data/cleaned/pulse_week'+week+'_cleaned.csv',
                                     rngs=rngs,
                                     device=device,
-                                    gt_limit = GT_LIMIT*len(rngs),
+                                    columns_to_keep = None,
+                                    gt_limit = GT_LIMIT,
                                     bias_limit = BIAS_LIMIT, 
                                     )
                     
@@ -297,7 +306,7 @@ if __name__ == "__main__":
                                 save_weights=SAVE_WEIGHTS,
                                 save_dir = directory,
                             )
-                    synthetic = hasattr(d, 'original_distribution')
+                    synthetic = (weeks[0] == 'SYN')
                     if synthetic: #synthetic data experiments
                         writer = SummaryWriter(comment='Variables=' + str(d.column_names) + '||Cell=' + str(d.upscaled_cell)+'||seed:'+str(rngs['seed_bias']))
                     else: #non synthetic data experiments
@@ -313,7 +322,7 @@ if __name__ == "__main__":
                     if week == "Syn":
                         c_names = d.column_names
                     
-                    print(d.column_names)
+                    #print(d.column_names)
                     weights, bias_labels, prob_diffs,  test_probs, test_prob_diffs, generator_losses, discriminator_losses  = gan.train(BATCHS_IN_EPOCH,
                                                                                                                                 hparams['epochs'],
                                                                                                                                 hparams['warmup_epochs'],

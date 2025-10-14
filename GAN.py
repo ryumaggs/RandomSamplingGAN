@@ -146,7 +146,7 @@ class GAN():
                                         actual_input=self.bias_dataset.squeeze(0),
                                         num_steps=50,
                                         unsqueeze=True)
-        mean_grad = compute_IG_jacobian(all_inputs,self,network='generator')
+        mean_grad = compute_IG(all_inputs,self,network='generator')
         self.input_grad_history.append(mean_grad)
 
     def compute_input_gradient_disc(self):
@@ -564,7 +564,7 @@ class WGAN_GP(GAN):
         lambda_min = 50
         #_, _, oweights = self.generator.forward(self.bias_dataset)
         #oweights = torch.nn.functional.softmax(oweights,dim=0).to(self.device)
-        if True: #warmup code
+        if False: #warmup code
             oweights=None
             for epoch in tqdm(range(warmup_epochs)):
                 discriminator_loss, tf_score, gp, gt_score, bias_score, unique_count = self.train_discriminator(epoch,
@@ -625,8 +625,8 @@ class WGAN_GP(GAN):
                                                                                                                           discriminator_training_factor=temp_disc_training_factor,
                                                                                                                           epoch=epoch,
                                                                                                                           total_epoch = epochs)
-            if epoch % 10 == 0:
-                self.compute_input_gradient_generator()
+            self.compute_input_gradient_generator()
+            self.compute_input_gradient_disc()
 
             if epoch >= 2 and not synthetic:
                 writer.add_scalar('weight l2 hist', np.linalg.norm(weight_history[-1]-weight_history[-2],ord=2),epoch)

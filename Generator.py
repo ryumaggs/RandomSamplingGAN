@@ -259,6 +259,9 @@ class DeepSetNet(nn.Module):
                     torch.nn.init.zeros_(layer.bias)
 
     def forward(self, dataset, batch_override=None): 
+        '''
+        dataset is (1 x N x D) matrix, not [N x D]
+        '''
         bs = self.batch_size
         #handle embeddings
         #x = embed_data(self.embedding_layers,self.embedding_dict,dataset.unsqueeze(0))

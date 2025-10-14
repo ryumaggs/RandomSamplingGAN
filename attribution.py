@@ -112,7 +112,8 @@ def process_grad(cgrad,embedding_dict):
     cur_index = 0
     visited_columns = np.zeros(cgrad.shape[1])
     for k,e in embedding_dict.items():
-        sep_grads[k] = np.linalg.norm(cgrad[:,cur_index:cur_index+e[2]],ord=2)
+        #sep_grads[k] = np.linalg.norm(cgrad[:,cur_index:cur_index+e[2]],ord=2)
+        sep_grads[k] = np.mean(cgrad[:,cur_index:cur_index+e[2]])
         visited_columns[cur_index:cur_index+e[2]] = 1
         cur_index += e[2]
     return sep_grads

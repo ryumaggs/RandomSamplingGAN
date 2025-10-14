@@ -147,22 +147,24 @@ class HouseholdPulse_dataset():
             self.ground_truth_dataset = np.concatenate(gt_list, axis=0)
             self.biased_dataset = np.concatenate(bd_list, axis=0)
         else:
-            self.ground_truth_dataset, self.biased_dataset = self.load_data_with_rngs(
-                                                                columns_to_keep,
-                                                                raw_bias_load,
-                                                                bias_limit,
-                                                                raw_gt_load,
-                                                                gt_limit,
-                                                                rngs)
+            self.ground_truth_dataset, self.biased_dataset, self.biased_labels = self.load_data_with_rngs(
+                                                                            columns_to_keep,
+                                                                            raw_bias_load,
+                                                                            bias_limit,
+                                                                            raw_gt_load,
+                                                                            gt_limit,
+                                                                            rngs)
         del raw_gt_load
         del raw_bias_load 
+
         self.synthetic_label_1 = None
         self.synthetic_label_2 = None
         self.var_setup()
     
     def create_embedding_dictionary(self,df):
         unique_counts = df.nunique().to_dict()
-        del unique_counts['PERWT']
+        if 'PERWT' in unique_counts:
+            del unique_counts['PERWT']
         uc = {}
         for i, name in enumerate(unique_counts):
             if unique_counts[name] <= 20:
@@ -191,11 +193,8 @@ class HouseholdPulse_dataset():
         self.biased_dataset = torch.tensor(self.biased_dataset,device=self.device,dtype=torch.float32)
 
     def var_setup(self):
-        self.biased_labels = self.biased_dataset[:,:self.num_labels]
-        for nl in range(self.num_labels):
-            print("uniform avg target: ", sum(self.biased_labels[:,nl])/len(self.biased_labels[:,nl]))
-        self.unscaled_ground_truth = self.ground_truth_dataset[:,1:]
-        self.unscaled_biased = self.biased_dataset[:,1:]
+        self.unscaled_ground_truth = self.ground_truth_dataset
+        self.unscaled_biased = self.biased_dataset
 
         self.ground_truth = None
         self.ground_truth_demographics = None
@@ -203,8 +202,8 @@ class HouseholdPulse_dataset():
         self.gt_cpu = self.ground_truth_dataset
         self.bias_cpu = self.biased_dataset
 
-        self.ground_truth_dataset = torch.tensor(self.ground_truth_dataset[:,1:],device=self.device,dtype=torch.float32)
-        self.biased_dataset = torch.tensor(self.biased_dataset[:,1:],device=self.device,dtype=torch.float32)
+        self.ground_truth_dataset = torch.tensor(self.ground_truth_dataset,device=self.device,dtype=torch.float32)
+        self.biased_dataset = torch.tensor(self.biased_dataset,device=self.device,dtype=torch.float32)
 
         self.ground_truth_dataset = embed_data(None,self.embedding_dict,self.ground_truth_dataset)
         self.biased_dataset = embed_data(None,self.embedding_dict,self.biased_dataset).unsqueeze(0)
@@ -253,12 +252,23 @@ class HouseholdPulse_dataset():
                 bd = raw_bias_load.sample(n=bias_limit,random_state=rngs['seed_bias'])[survey_columns_to_keep].to_numpy(dtype=np.float, na_value=0)
 
         else:
-            gtd = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rngs['seed_gt']).to_numpy(dtype=np.float, na_value=0)
+            gtd = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rngs['seed_gt'])
+            #print("AAA: ", [raw_gt_load[col].max() for col in raw_gt_load.columns])
+            #print("BBB: ", num_categories_per_features)
+            gtd = gtd.to_numpy(dtype=np.float, na_value=0)
             if bias_limit > raw_bias_load.shape[0]:
                 bd = raw_bias_load.to_numpy(dtype=np.float, na_value=0)
             else:
-                bd = raw_bias_load.sample(n=bias_limit,random_state=rngs['seed_bias']).to_numpy(dtype=np.float, na_value=0)
-        return gtd, bd
+                bd = raw_bias_load.sample(n=bias_limit,random_state=rngs['seed_bias'])
+                num_categories_per_features = [raw_gt_load[col].nunique() for col in raw_gt_load.columns]
+                bd = bd.to_numpy(dtype=np.float, na_value=0)
+
+            bl = bd[:,:self.num_labels]
+            for nl in range(self.num_labels):
+                print("uniform avg target: ", sum(bl[:,nl])/len(bl[:,nl]))
+            
+            print(gtd.shape, bd.shape, bl.shape)
+        return gtd[:,1:], bd[:,self.num_labels:], bl
     
     def create_combination_id_mapping(self,np1, np2):
         #convert both to pandas df
@@ -309,8 +319,8 @@ class HouseholdPulse_synthetic(HouseholdPulse_dataset):
                  bias_path,
                  rngs,
                  device=None,
-                 gt_limit = 5000,
-                 bias_limit = 1000, ):
+                 gt_limit=5000,
+                 bias_limit=1000, ):
         '''
         column_names - list[str] - len(2) - 2 valid column names in the ground_truth dataset 
         '''
@@ -322,52 +332,110 @@ class HouseholdPulse_synthetic(HouseholdPulse_dataset):
         rng = rngs
         raw_gt_load = self.load_csv(ground_truth_path)
         self.ground_truth_dataset = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rng['seed_gt'])
+        #remove points already sampled
+        raw_gt_load = raw_gt_load.drop(self.ground_truth_dataset.index)
+        
+        #remove perwt column from both gt and raw
+        self.ground_truth_dataset.drop(self.ground_truth_dataset.columns[0], axis=1, inplace=True)
+        raw_gt_load.drop(raw_gt_load.columns[0], axis=1, inplace=True)
+
         self.embedding_dict = self.create_embedding_dictionary(raw_gt_load)
         self.num_categories_per_features = [raw_gt_load[col].nunique() for col in raw_gt_load.columns]
         self.num_categories_per_features = self.num_categories_per_features[1:]
+        self.column_names = []
+        self.original_distributions = []
+        self.col_indexes = []
+        self.upscaled_cells = []
+        self.joint_table = {}
 
         #pick two random variables
+        self.pick_perturb_two_vars()
+        self.pick_perturb_two_vars()
+        self.pick_perturb_two_vars()
+        w = self.reweight_to_joint_targets(raw_gt_load,
+                                       targets=self.joint_table,)
+        #sample with final w
+        idx = np.random.choice(raw_gt_load.shape[0], size=2500, replace=False, p=w)
+        sampled_df = raw_gt_load.iloc[idx]
+        #sample data set with distribution and convert to numpy array
+        #new_joint_distr = self.resample_df_with_joint_distribution(self.column_names, self.ground_truth_dataset, joint_np, x_vals, y_vals, bias_limit)
+        #experimental
+        #self.missing_values = self.has_missing_joints(new_joint_distr, col_i=var_1, col_j=var_2)
+        self.biased_dataset = sampled_df.to_numpy(dtype=np.float, na_value=0)
+        self.ground_truth_dataset = self.ground_truth_dataset.to_numpy(dtype=np.float, na_value=0)
+
+        self.var_setup()
+        self.add_random_noise()
+
+    def pick_perturb_two_vars(self):
         all_columns = list(self.ground_truth_dataset.columns)
-        indexes = np.arange(len(all_columns))[1:]
+        indexes = np.arange(len(all_columns))
         var_1_index = np.random.choice(indexes)
         indexes = indexes[indexes != var_1_index]
         var_2_index = np.random.choice(indexes)
         var_1 = all_columns[var_1_index]
         var_2 = all_columns[var_2_index]
-        self.column_names = [var_1, var_2] #store selected columns for use at :355
-        self.col_indexes = [var_1_index-1, var_2_index-1]
+        self.column_names += [(var_1, var_2)] #store selected columns for use at :355
+        self.col_indexes += [(var_1_index, var_2_index)]
 
         #compute and store original joint distribution
         joint_dist = pd.crosstab(self.ground_truth_dataset[var_1], self.ground_truth_dataset[var_2], normalize=True)
         joint_np = joint_dist.values
         x_vals = sorted(self.ground_truth_dataset[var_1].unique())
         y_vals = sorted(self.ground_truth_dataset[var_2].unique())
-        self.original_distribution = np.copy(joint_np).flatten()
+        self.original_distributions.append(np.copy(joint_np).flatten())
         self.var_counts = [len(x_vals),len(y_vals)]
 
-        #pick random cell in the joint distribution to be upscaled
+        #pick two random variables
         rand_x = np.random.choice(np.arange(len(x_vals)))
         rand_y = np.random.choice(np.arange(len(y_vals)))
-        self.upscaled_cell = [rand_x, rand_y]
+        self.upscaled_cells += [(rand_x, rand_y)]
 
         #Resample new joint after upscaling cell by epsilon
-        p = joint_np[rand_x, rand_y]
         # Random perturbation: about ±25–50% of the cell's current value
         epsilon = np.random.uniform(0.5,1)
         #epsilon = 0.5
         joint_np[rand_x, rand_y] += epsilon
         joint_np = np.clip(joint_np, 0.01, None)   # keep non-negative
         joint_np /= joint_np.sum()  # Renormalize
-        new_joint_distr = self.resample_df_with_joint_distribution(self.column_names, self.ground_truth_dataset, joint_np, x_vals, y_vals, bias_limit)
-        #experimental
-        self.missing_values = self.has_missing_joints(new_joint_distr, col_i=var_1, col_j=var_2)
+        self.joint_table[(var_1_index, var_2_index)] = joint_np
 
-        #determining what is missing from data set
-        self.biased_dataset = new_joint_distr.to_numpy(dtype=np.float, na_value=0)
-        self.ground_truth_dataset = self.ground_truth_dataset.to_numpy(dtype=np.float, na_value=0)
+    def reweight_to_joint_targets(self, df, targets, max_iter=1000, tol=1e-6):
+        """
+        df: original dataset (N x 8)
+        pairs: list of (i,j) index pairs
+        targets: dict mapping (i,j) -> target joint distribution as DataFrame or np.array
+        """
+        N = len(df)
+        w = np.ones(N) / N  # start with uniform weights
 
-        self.var_setup()
-        self.add_random_noise()
+        for it in range(max_iter):
+            w_old = w.copy()
+            for (i, j), target in targets.items():
+                # current weighted joint
+                joint = pd.crosstab(df.iloc[:, i], df.iloc[:, j], values=w, aggfunc="sum", normalize=True).to_numpy()
+                # ratio of target to current
+                ratio = target / (joint + 1e-12)
+                
+                # map back ratios to individual rows
+                mapping = {}
+                vals_i = df.iloc[:, i].values
+                vals_j = df.iloc[:, j].values
+                for ii, vi in enumerate(np.unique(vals_i)):
+                    for jj, vj in enumerate(np.unique(vals_j)):
+                        mapping[(vi, vj)] = ratio[ii, jj]
+                
+                # update weights multiplicatively
+                w *= np.array([mapping[(vals_i[k], vals_j[k])] for k in range(N)])
+
+            # normalize
+            w /= w.sum()
+            
+            # check convergence
+            if np.linalg.norm(w - w_old, 1) < tol:
+                break
+        
+        return w
 
     def add_random_noise(self):
         categories_list = [np.random.randint(2,9) for _ in range(len(self.embedding_dict))]
