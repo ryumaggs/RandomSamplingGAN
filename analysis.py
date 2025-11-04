@@ -7,6 +7,9 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from tensorboard.backend.event_processing import event_accumulator
 import os
+from scipy.stats import spearmanr
+from scipy.signal import find_peaks
+from scipy.ndimage import uniform_filter1d
 
 def plot_2d_runs(data):
     # Compute mean and standard deviation across experiments
@@ -224,29 +227,110 @@ def compute_rolling_std_numpy(y, window=20):
 def normalize_0_1(arr):
     return (arr - np.min(arr)) / (np.max(arr) - np.min(arr))
 
+def x_y_relationship(out):
+    start_point = 0
+    end_point = 300
+    Y = out['EMPSTAT prediction'][:,start_point:end_point]
+    gloss = out['GenLoss'][:,start_point:end_point]
+    entropy = out['Gen Entropy'][:,start_point:end_point]
+    bscore = out['Bias score'][:,start_point:end_point]
+    gp = out['Gradient Penalty'][:,start_point:end_point]
+
+    X = -1 * np.stack([gloss, entropy, bscore, gp])
+    V = 0.6
+
+    N, T, M = Y.shape[0], Y.shape[1], X.shape[0]
+    if 'metric_names' not in globals():
+        metric_names = [f"X_{j+1}" for j in range(M)]
+
+    # ---------------------------------------------------------
+    # 1. Spearman correlation with closeness measure exp(-|Y - V|)
+    # ---------------------------------------------------------
+    rho = np.zeros((M, T))
+    for j in range(M):
+        for t in range(T):
+            closeness = np.exp(-np.abs(Y[:, t] - V))
+            rho[j, t], _ = spearmanr(X[j, :, t], closeness)
+
+    # ---------------------------------------------------------
+    # 2. Spearman correlation with absolute error (negative)
+    # ---------------------------------------------------------
+    rho_err = np.zeros((M, T))
+    for j in range(M):
+        for t in range(T):
+            abs_err = -np.abs(Y[:, t] - V)
+            rho_err[j, t], _ = spearmanr(X[j, :, t], abs_err)
+
+    # ---------------------------------------------------------
+    # 3. Hybrid correlation × accuracy measure
+    # ---------------------------------------------------------
+    mean_abs_err = np.mean(np.abs(Y - V), axis=0)  # average error per time step
+    norm_err = mean_abs_err / mean_abs_err.max()   # normalize 0–1
+    H = rho * (1 - norm_err)                       # correlation weighted by accuracy
+
+    # ---------------------------------------------------------
+    # Plotting
+    # ---------------------------------------------------------
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
+
+    titles = [
+        r"(a) Spearman $\rho(X, e^{-|Y-V|})$",
+        r"(b) Spearman $\rho(X, -|Y-V|)$",
+        r"(c) Hybrid $ \rho \times (1 - \mathrm{norm\ error})$"
+    ]
+    data_list = [rho, rho_err, H]
+
+    for ax, data, title in zip(axes, data_list, titles):
+        im = ax.imshow(data, aspect='auto', cmap='coolwarm', vmin=-1, vmax=1)
+        ax.set_title(title)
+        ax.set_xlabel("Time step (t)")
+        ax.set_ylabel("Aux variable (j)")
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    plt.tight_layout()
+    plt.show()
+        
+        
 def entropy_pred_relationship(runs_path, filter_by, num_runs):
     out, event_files = load_runs_as_numpy(runs_path,  
-                             ['target prediction', 'GenLoss', 'Gen Entropy', 
+                             ['EMPSTAT prediction', 'GenLoss', 'Gen Entropy', 
                               'tvd', 'Warmup', 'Bias score', 'Gradient Penalty'],
                              filter_by=filter_by,
                              num_runs=num_runs)
-    vpt = out['target prediction']
+    vpt = out['EMPSTAT prediction']
     gloss = out['GenLoss']
     entropy = out['Gen Entropy']
     warmup = out['Warmup']
     bscore = out['Bias score']
     gp = out['Gradient Penalty']
     indices_in_range = np.where((entropy[0] >= 0.75) & (entropy[0] <= 0.8))[0]
-    print(indices_in_range)
     #t_f_scores = out['Truth - Fake scores']
     tvd = out['tvd']
-    fig, axs = plt.subplots(3, 3, figsize=(10, 10))
     order = np.arange(vpt.shape[0])
-    start_point = 0
-    print(vpt.shape)
-    end_point = len(entropy[0])
+    start_point = 50
+    end_point = 300 #len(entropy[0])
     indices = np.arange(len(entropy[0,start_point:end_point]))
     labels = ['entropy', 'truth-fake', 'tvd']
+    selected_x_axis = entropy
+    #vpt_b= vpt[:,start_point:end_point]
+    #print((np.argmin(np.abs(vpt_b.mean(axis=0) - 0.6))) + start_point)
+    #print((np.min(np.abs(vpt_b.mean(axis=0) - 0.6))))
+    #if False: #old analysis 
+    for k in [1]: #, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]:
+        #k = 20  # number of smallest elements per row
+        # Get indices of the k smallest elements per row
+        idx = np.argpartition(selected_x_axis, k, axis=1)[:, :k]
+        # Use advanced indexing to gather corresponding B values
+        rows = np.arange(selected_x_axis.shape[0])[:, None]
+        selected_B = vpt[rows, idx]
+        #plt.scatter(selected_B, np.zeros_like(selected_B), alpha=0.6, s=20)
+        #plt.show()
+        # Compute row-wise means
+        mean_B = np.mean(selected_B, axis=1)
+        print(k, np.mean(mean_B),"||",np.std(mean_B))
+    return None
+
+    fig, axs = plt.subplots(3, 3, figsize=(10, 10))
     for i in order[0:9]:
         name = ""
         ''' puts the week/file as the name
@@ -261,11 +345,12 @@ def entropy_pred_relationship(runs_path, filter_by, num_runs):
         
         row, col = divmod(i, 3)
         minidx, _, smoothed = find_trend_plateau(vpt[i], smooth_sigma = 20)
-        print(minidx, np.mean(vpt[i,minidx-2:minidx+2]))
+        print(minidx, np.mean(vpt[i,max(0,minidx-2):minidx+2]))
         norm_entrop = normalize_0_1(entropy[i,start_point:end_point])
         norm_tvd = normalize_0_1(tvd[i,start_point:end_point])
         norm_score = normalize_0_1(bscore[i,start_point:end_point])
         norm_gp = normalize_0_1(gp[i,start_point:end_point])
+
         x_axis =  entropy[i,start_point:end_point]
         y_axis = vpt[i,start_point:end_point]
         sc = axs[row,col].scatter(x_axis,y_axis,c=indices, cmap='viridis')
@@ -410,6 +495,29 @@ def HHP_load_all_weeks_as_dict(runs_path):
         all_outs[key] = out
     return all_outs
 
+def process_load_output(out, smoothing_window):
+    start_point = 2
+    end_point = 500
+    Y = out['EMPSTAT prediction'][:,start_point:end_point]
+    gloss = out['GenLoss'][:,start_point:end_point]
+    entropy = out['Gen Entropy'][:,start_point:end_point]
+    bscore = out['Bias score'][:,start_point:end_point]
+    gp = out['Gradient Penalty'][:,start_point:end_point]
+
+    X = np.stack([gloss, entropy, bscore, gp])
+    N, T, M = Y.shape[0], Y.shape[1], X.shape[0]
+    #V = 0.6
+    #t_star = np.argmin(np.abs(Y - V), axis=1)   # shape (N,)
+    ### analysis of variables down below
+    smooth_Y = True
+    # Smooth Y if desired
+    if smooth_Y:
+        Y_smooth = uniform_filter1d(Y, size=smoothing_window, axis=1)
+    else:
+        Y_smooth = Y
+    
+    return N, T, M, Y, Y_smooth, X
+
 def process_all_weeks_dict(all_outs,
                            save_dir,
                            save=False,):
@@ -418,6 +526,7 @@ def process_all_weeks_dict(all_outs,
             continue
         entropy = all_outs[key]['Gen Entropy']
         vpt = all_outs[key]['target prediction']
+        print(entropy.shape)
         all_min_entropy_idx = np.argmin(entropy,axis=1)
         all_min_entropy_preds = []
         for i, amei in enumerate(all_min_entropy_idx):
@@ -445,4 +554,158 @@ def process_all_weeks_dict(all_outs,
                 np.savez(save_dir+"/chosen_weight.npz", w=selected_weights)
                 np.savez(save_dir+"/chosen_data.npz", x = datum, y = labels)
                 np.savez(save_dir+"/chosen_weight_history.npz", w = weights)
+
+def absolute_analysis(out):
+    top_K = 5
+    smoothing_window = 5
+    N, T, M, Y, Y_smooth, X = process_load_output(out, smoothing_window)
+    Y_max_topK_agg = np.zeros(M)
+    Y_min_topK_agg = np.zeros(M)
+
+    for j in range(M):
+        all_x_max = []
+        all_Y_max = []
+        all_x_min = []
+        all_Y_min = []
+
+        for n in range(N):
+            # Smooth auxiliary variable
+            x_smooth = uniform_filter1d(X[j, n, :], size=smoothing_window)
+
+            # ----------------- maxima -----------------
+            max_val = np.max(x_smooth)
+            max_idx = np.argmax(x_smooth)
+            all_x_max.append(max_val)
+            all_Y_max.append(Y_smooth[n, max_idx])
+
+            # ----------------- minima -----------------
+            min_val = np.min(x_smooth)
+            min_idx = np.argmin(x_smooth)
+            all_x_min.append(min_val)
+            all_Y_min.append(Y_smooth[n, min_idx])
+
+        # ----------------- aggregate top K across all experiments -----------------
+        # maxima
+        all_x_max = np.array(all_x_max)
+        all_Y_max = np.array(all_Y_max)
+        top_indices = np.argsort(all_x_max)[-top_K:]  # top K largest values
+        Y_max_topK_agg[j] = np.mean(all_Y_max[top_indices])
+
+        # minima
+        all_x_min = np.array(all_x_min)
+        all_Y_min = np.array(all_Y_min)
+        top_indices = np.argsort(all_x_min)[:top_K]  # top K smallest values
+        Y_min_topK_agg[j] = np.mean(all_Y_min[top_indices])
+
+    # Example access
+    for j in range(M):
+        print(f"Aux {j}: Mean Y at top {top_K} maxima across all experiments = {Y_max_topK_agg[j]:.3f}")
+        print(f"Aux {j}: Mean Y at top {top_K} minima across all experiments = {Y_min_topK_agg[j]:.3f}")
+        print("")
+
+
+def peak_analysis(out):
+    '''
+    out - output from load_numpy runs
+
+
+    X - np array auxilery m etrics
+    Y - prediction variable
+    V - true value
+    '''
+    top_K = 5  # number of extrema to select across all experiments
+    smoothing_window = 3  # window size for uniform_filter1d
+    start_point = 10
+    end_point = 500
+    Y = out['EMPSTAT prediction'][:,start_point:end_point]
+    gloss = out['GenLoss'][:,start_point:end_point]
+    entropy = out['Gen Entropy'][:,start_point:end_point]
+    bscore = out['Bias score'][:,start_point:end_point]
+    gp = out['Gradient Penalty'][:,start_point:end_point]
+
+    X = np.stack([gloss, entropy, bscore, gp])
+    N, T, M = Y.shape[0], Y.shape[1], X.shape[0]
+    #V = 0.6
+    #t_star = np.argmin(np.abs(Y - V), axis=1)   # shape (N,)
+    ### analysis of variables down below
+
+    # Optionally smooth Y
+    Y_smooth = uniform_filter1d(Y, size=smoothing_window, axis=1)
+
+    # ---------------------------------------------------------
+    # Storage for results
+    # ---------------------------------------------------------
+    # Each entry is a list of Y values at extrema for that variable and experiment
+    Y_at_max = [[[] for _ in range(N)] for _ in range(M)]
+    Y_at_min = [[[] for _ in range(N)] for _ in range(M)]
+
+    # ---------------------------------------------------------
+    # Find local extrema
+    # ---------------------------------------------------------
+    for j in range(M):  # auxiliary variables
+        for n in range(N):  # experiments
+            # Smooth auxiliary variable
+            x_smooth = uniform_filter1d(X[j, n, :], size=smoothing_window)
             
+            # Find maxima
+            peaks, _ = find_peaks(x_smooth)
+            Y_at_max[j][n] = Y_smooth[n, peaks].tolist()
+            
+            # Find minima by inverting
+            troughs, _ = find_peaks(-x_smooth)
+            Y_at_min[j][n] = Y_smooth[n, troughs].tolist()
+
+    # ---------------------------------------------------------
+    # Example access
+    # Y_at_max[0][0] -> list of Y values at local maxima of auxiliary variable 0 in experiment 0
+    # Y_at_min[2][5] -> list of Y values at local minima of auxiliary variable 2 in experiment 5
+    # ---------------------------------------------------------
+
+    # Optional: print summary
+    #for j in range(M):
+    #    for n in range(N):
+    #        print(f"Aux {j}, Exp {n}: {len(Y_at_max[j][n])} maxima, {len(Y_at_min[j][n])} minima")
+
+    # Storage for aggregated Y at top K extrema across all experiments
+    Y_max_topK_agg = np.zeros(M)
+    Y_min_topK_agg = np.zeros(M)
+
+    for j in range(M):
+        # ----------------- maxima -----------------
+        all_x_max = []
+        all_Y_max = []
+        for n in range(N):
+            # Original peaks
+            peaks, _ = find_peaks(uniform_filter1d(X[j, n, :], size=smoothing_window))
+            if len(peaks) > 0:
+                all_x_max.extend(X[j, n, peaks])
+                all_Y_max.extend(Y_smooth[n, peaks])
+        if len(all_x_max) > 0:
+            all_x_max = np.array(all_x_max)
+            all_Y_max = np.array(all_Y_max)
+            top_indices = np.argsort(all_x_max)[-top_K:]  # top K largest peaks
+            Y_max_topK_agg[j] = np.mean(all_Y_max[top_indices])
+        else:
+            Y_max_topK_agg[j] = np.nan
+
+        # ----------------- minima -----------------
+        all_x_min = []
+        all_Y_min = []
+        for n in range(N):
+            troughs, _ = find_peaks(-uniform_filter1d(X[j, n, :], size=smoothing_window))
+            if len(troughs) > 0:
+                all_x_min.extend(X[j, n, troughs])
+                all_Y_min.extend(Y_smooth[n, troughs])
+        if len(all_x_min) > 0:
+            all_x_min = np.array(all_x_min)
+            all_Y_min = np.array(all_Y_min)
+            top_indices = np.argsort(all_x_min)[:top_K]  # top K deepest troughs
+            Y_min_topK_agg[j] = np.mean(all_Y_min[top_indices])
+        else:
+            Y_min_topK_agg[j] = np.nan
+
+    # Example access
+    for j in range(M):
+        print(f"Aux {j}: Mean Y at top {top_K} maxima across all experiments = {Y_max_topK_agg[j]:.3f}")
+        print(f"Aux {j}: Mean Y at top {top_K} minima across all experiments = {Y_min_topK_agg[j]:.3f}")
+        print("")
