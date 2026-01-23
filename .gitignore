@@ -6,3 +6,8 @@ saves_to_share/
 UncheckedRuns/
 saves_history/
 runs/
+runs*/
+saved*/
+saves*/
+*.pth
+*.pikl
