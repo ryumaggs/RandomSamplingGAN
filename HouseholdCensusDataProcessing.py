@@ -1,7 +1,17 @@
 import pandas as pd
 import os
 import random
+from util import rename_check
 
+'''
+Important notes:
+Previously processed data sets used, but this has been removed 12.10.25:
+    #remove all people that got an associates degree. this info is not tracked by ipums
+    survey_df= survey_df[survey_df['EEDUC'] != 5] #should i do this? idk
+
+Survey todo: Age, Education, Income, marital status, race, region, SEX, RECVDVACC
+Census todo: Age, Education, Income, marital status, race, region, sex
+'''
 def filter_questions(input_file, output_file):
     '''
     input_file - str - path to axios-ipsos covid survey
@@ -53,6 +63,273 @@ def ensure_zero_based_categories(df, col):
     
     return df
 
+def HHP_recode_birthyear_general(df, year, var_name='BIRTHYR', new_var_name="AGE"):
+    def recode_census_age(value):
+        if year - value >= 85: 
+            return 4
+        elif year - value >= 65:
+            return 3
+        elif year - value >= 50:
+            return 2
+        elif year - value >= 35:
+            return 1
+        elif year - value >= 18:
+            return 0
+        else:
+            return None
+    df[var_name] = df[var_name].apply(recode_census_age)
+    rename_check(df, var_name, new_var_name)
+
+def HHP_recode_education_survey(df, var_name='EEDUC', new_var_name='EDUC'):
+    education_mapping = {
+            1: 0,  # Less than high school
+            2: 0,  # Less than high school
+            3: 1,  # High school graduate
+            4: 2,  # Some college
+            6: 3,  # Bachelor’s degree
+            7: 4   # Graduate degree
+        }
+    # Apply mapping
+    df[var_name] = df[var_name].map(education_mapping)
+    rename_check(df, var_name, new_var_name)
+
+def HHP_recode_education_census(df, var_name='EDUC', new_var_name=None):
+    
+    educ_mapping = {
+            0: 0,  # N/A or no schooling
+            1: 0,  # Less than high school
+            2: 0,  # Less than high school
+            3: 0,  # Less than high school
+            4: 0,  # Less than high school
+            5: 0,  # Less than high school
+            6: 1,  # High school graduate
+            7: 2,  # Some college
+            8: 2,  # Some college
+            9: 2,  # Some college
+            10: 3, # Bachelor's degree
+            11: 4,  # Graduate degree,
+            99: None,
+    }
+    df[var_name] = df[var_name].map(educ_mapping)
+    rename_check(df, var_name, new_var_name)
+
+def HHP_recode_income_survey(df, var_name='INCOME', new_var_name='INCTOT'):
+    '''
+    1) Less than $25,000  
+    2) $25,000 - $34,999  
+    3) $35,000 - $49,999   
+    4) $50,000 - $74,999   
+    5) $75,000 - $99,999   
+    6) $100,000 - $149,999   
+    7) $150,000 - $199,999
+    8) $200,000 and above
+    -99) Question seen but category not selected
+    -88) Missing / Did not report
+    '''
+    
+    def recode_income(value):
+        # value is 1..24 corresponding to the fine-grained bins
+        if value >= 1 and value <= 8:
+            return value - 1
+        else:
+            return None  # -99 and -99 indicate missing/no answer
+    df[var_name] = df[var_name].apply(recode_income)
+    rename_check(df, var_name, new_var_name)
+            
+def HHP_recode_income_census(df, var_name='INCTOT', new_var_name=None):
+    def map_income(value):
+        if value == 9999999 or value == 9999998:
+            return None
+        if value < 25000:
+            return 0  # Less than $25,000
+        elif 25000 <= value < 35000:
+            return 1  # $25,000 - $34,999
+        elif 35000 <= value < 50000:
+            return 2  # $35,000 - $49,999
+        elif 50000 <= value < 75000:
+            return 3  # $50,000 - $74,999
+        elif 75000 <= value < 100000:
+            return 4  # $75,000 - $99,999
+        elif 100000 <= value < 150000:
+            return 5  # $100,000 - $149,999
+        elif 150000 <= value < 200000:
+            return 6  # $150,000 - $199,999
+        else:
+            return 7  # $200,000 and above
+
+    df[var_name] = df[var_name].apply(map_income)
+    rename_check(df, var_name, new_var_name)
+
+def HHP_recode_maritalStatus_survey(df, var_name='MS', new_var_name='MARST'):
+    '''
+    1) Now married 
+    2) Widowed
+    3) Divorced
+    4) Separated
+    5) Never married
+    -99) Question seen but category not selected
+    -88) Missing / Did not report
+    '''
+
+    marital_status_map = {
+    1: 0,
+    2: 1, 
+    3: 2, 
+    4: 3, 
+    5: 4,
+    -99: None,
+    -88: None,
+    }
+    df[var_name] = df[var_name].map(marital_status_map)
+    rename_check(df, var_name, new_var_name)
+
+def HHP_recode_maritalStatus_census(df, var_name='MARST', new_var_name=None):
+    marital_status_map = {
+            1: 0,  # Married, spouse present -> Now married
+            2: 0,  # Married, spouse absent -> Now married
+            3: 3,  # Separated -> Separated
+            4: 2,  # Divorced -> Divorced
+            5: 1,  # Widowed -> Widowed
+            6: 4,   # Never married/single -> Never married
+            9: None,
+    }
+    df[var_name] = df[var_name].map(marital_status_map)
+    rename_check(df, var_name, new_var_name)
+
+def HHP_recode_perwt_census(df, var_name='PERWT', new_var_name=None):
+    '''
+    PERWT is a 6-digit numeric variable which indicates how many persons in the 
+    U.S. population are represented by a given person in an IPUMS sample and has two implied decimals.
+    '''
+    def correct_perwt(value):
+        return value/100
+    df[var_name] = df[var_name].apply(correct_perwt)
+    rename_check(df, var_name, new_var_name)
+
+def HHP_recode_race_survey(df, var_name='RRACE', new_var_name='RACE'):
+    '''
+    1) White, Alone
+    2) Black, Alone
+    3) Asian, Alone
+    4) Any other race alone, or race in combination
+    '''
+    raceA_to_unified = {
+        1: 0,
+        2: 1,
+        3: 2,
+        4: 3,
+    }
+    df[var_name] = df[var_name].map(raceA_to_unified)
+    rename_check(df, var_name, new_var_name)
+
+def HHP_recode_race_census(df, var_name='RACE', new_var_name=None):
+    #race census
+    race_map = {
+        1: 0,  # White -> White, Alone
+        2: 1,  # Black/African American -> Black, Alone
+        3: 3,  # American Indian or Alaska Native -> Any other race alone, or race in combination
+        4: 2,  # Chinese -> Asian, Alone
+        5: 2,  # Japanese -> Asian, Alone
+        6: 2,  # Other Asian or Pacific Islander -> Asian, Alone
+        7: 3,  # Other race, nec -> Any other race alone, or race in combination
+        8: 3,  # Two major races -> Any other race alone, or race in combination
+        9: 3   # Three or more major races -> Any other race alone, or race in combination
+    }
+    df[var_name] = df[var_name].map(race_map)
+    rename_check(df, var_name, new_var_name)
+
+def HHP_recode_region_survey(df, var_name='REGION', new_var_name=None):
+    '''
+    1) Northeast
+    2) South
+    3) Midwest
+    4) West
+    '''
+    region_map = {
+        1: 0,
+        2: 1,
+        3: 2,
+        4: 3,
+    }
+    df[var_name] = df[var_name].map(region_map)
+    rename_check(df, var_name, new_var_name)
+
+def HHP_recode_region_census(df, var_name='REGION', new_var_name=None):
+    def recode_census_region(value):
+        if 10 <= value <= 19:
+            return 0  # NorthEast
+        elif 20 <= value <= 29:
+            return 2  # MidWest
+        elif 30 <= value <= 39:
+            return 1  # South
+        elif 40 <= value <= 49:
+            return 3  # West
+        else:
+            return None  # Handle unexpected values
+    # Apply the recoding function to the region column in the census data
+    df[var_name] = df[var_name].apply(recode_census_region)
+    rename_check(df, var_name, new_var_name)
+
+def HHP_recode_sex_survey(df, var_name=['EGENDER','EGENID_BIRTH'],new_var_name='SEX'):
+    '''
+    The variable name changed at some point during the survey waves
+    1) Male 
+    2) Female
+    '''
+    sex_map = {1:0, 2:1}
+    for vname in var_name:
+        if vname in df.columns:
+            df[vname] = df[vname].map(sex_map)
+            rename_check(df, vname, new_var_name)
+            return
+
+def HHP_recode_sex_census(df, var_name='SEX', new_var_name=None):
+    sex_map = {1:0, 2:1, 9:None}
+    df[var_name] = df[var_name].map(sex_map)
+    rename_check(df, var_name, new_var_name)
+
+def HHP_recode_vac_survey(df, var_name='RECVDVACC',new_var_name=None):
+    '''
+    1) Yes
+    2) No
+    -99) Question seen but category not selected
+    -88) Missing / Did not report
+    '''
+    vac_map = {
+        1: 1,
+        2: 0,
+        -99: None,
+        -88: None,
+    }
+    df[var_name] = df[var_name].map(vac_map)
+    rename_check(df, var_name, new_var_name)
+
+def HHP_recode_survey(survey_df, year):
+    HHP_recode_birthyear_general(survey_df,year,var_name='TBIRTH_YEAR')
+    HHP_recode_education_survey(survey_df)
+    HHP_recode_maritalStatus_survey(survey_df)
+    HHP_recode_race_survey(survey_df)
+    HHP_recode_region_survey(survey_df)
+    HHP_recode_sex_survey(survey_df)
+    HHP_recode_income_survey(survey_df)
+    HHP_recode_vac_survey(survey_df)
+
+def HHP_recode_census(census_df, year):
+    #census specific fixes
+    #HHP_recode_perwt_census(census_df) #scale perwt correctly (2 decimals implied)
+    HHP_recode_birthyear_general(census_df,year,var_name='BIRTHYR')
+    HHP_recode_education_census(census_df)
+    HHP_recode_maritalStatus_census(census_df)
+    HHP_recode_race_census(census_df)
+    HHP_recode_region_census(census_df)
+    HHP_recode_sex_census(census_df)
+    HHP_recode_income_census(census_df)
+
+
+'''
+Survey age: TBIRTH_YEAR
+
+'''
 def recoding_survey_and_census_data(survey_df, census_df, target_var):
 
     '''
@@ -121,218 +398,25 @@ def recoding_survey_and_census_data(survey_df, census_df, target_var):
     YEAR = 2021
     relevant_columns_global = ['REGION', 'EDUC', 'INCTOT', 'SEX', 'MARST', 'RACE', 'AGE']
     #target_var = 'RECVDVACC' or HLTHINS1
+    combined_census_df=None
     if survey_df is not None:
-        nan_check = target_var + ['REGION', 'EEDUC', 'INCOME', 'EGENDER', 'MS', 'RRACE', 'TBIRTH_YEAR']
-        survey_df = survey_df.dropna(subset=nan_check)
-        
-        #remove people that didnt answer vaccine question
-        for var in nan_check:
-            survey_df = survey_df[survey_df[var] != -99]
-            survey_df = survey_df[survey_df[var] != -88]
-
-        #remove all people that got an associates degree. this info is not tracked by ipums
-        survey_df= survey_df[survey_df['EEDUC'] != 5]
-
-        survey_df['EST_ST'] = survey_df['EST_ST'].map(state_code_to_biden_pct)
-
-        def recode_recieved_vaccine(value):
-            if value == 2: #no
-                return 0
-            elif value == 1: #yes
-                return 1
-        for target_col in target_var:
-            survey_df[target_col] = survey_df[target_col].apply(recode_recieved_vaccine)
-        
-        def recode_census_age(value):
-            if YEAR - value >= 85: 
-                return 4
-            elif YEAR - value >= 65:
-                return 3
-            elif YEAR - value >= 50:
-                return 2
-            elif YEAR - value >= 35:
-                return 1
-            elif YEAR - value >= 18:
-                return 0
-        survey_df['TBIRTH_YEAR'] = survey_df['TBIRTH_YEAR'].apply(recode_census_age)
-
-        #region. dont have to do anything i think
-
-        #education
-        education_mapping = {
-            1: 0,  # Less than high school
-            2: 0,  # Less than high school
-            3: 1,  # High school graduate
-            4: 2,  # Some college
-            6: 3,  # Bachelor’s degree
-            7: 4   # Graduate degree
-        }
-        survey_df['EEDUC'] = survey_df['EEDUC'].map(education_mapping)
-
-        #ipums chosen variables: REGION,EDUC,INCTOT,SEX,MARST,FAMSIZE,RACE, BIRTHYR
-        #census corresponding: REGION, EEDUC, INCOME, EGENDER, MS, THHLD_NUMPER, RRACE, TBIRTH_YEAR
-
-        #TBIRTH_YEAR just rename to AGE
-        survey_df.rename(columns={'TBIRTH_YEAR':'AGE'},inplace=True)
-
-        #RRACE just rename to RACE
-        survey_df.rename(columns={'RRACE':'RACE'},inplace=True)
-
-        #INCOME just rename to INCTOT
-        survey_df.rename(columns={'INCOME':'INCTOT'},inplace=True)
-
-        #EEDUC just rename to EDUC
-        survey_df.rename(columns={'EEDUC':'EDUC'},inplace=True)
-
-        #EGENDER just rename to sex
-        survey_df.rename(columns={'EGENDER':'SEX'},inplace=True)
-
-        #marital status the census is re-encoded to match
-        survey_df.rename(columns={'MS':'MARST'},inplace=True)
-
-        #household size: THHLD_NUMPER nothing to do but rename
-        survey_df.rename(columns={'THHLD_NUMPER':'FAMSIZE'},inplace=True)
-        
-        #state ID rename to biden vote %
-        survey_df.rename(columns={'EST_ST':'BIDENPERC'},inplace=True)
-        
-        relevant_columns_local = target_var + relevant_columns_global
-
-        #deleting famsize because the categories are too different
-        survey_df = survey_df.filter(items=relevant_columns_local)
-
-        for col in survey_df.columns:
-            ensure_zero_based_categories(survey_df, col)
-
+        HHP_recode_survey(survey_df, YEAR)
+        survey_df = survey_df.filter(items=target_var + relevant_columns_global)
+        survey_df = survey_df.dropna()
     if census_df is not None:
-        #remove anyone with GQ != 1
-        census_df = census_df[census_df['GQ'] == 1]
-        #clean any missing birth years
-        census_df = census_df[~census_df['BIRTHYR'].isin([9996,9997,9998,9999])]
-        #remove anyone with birthyear born within 18 years of survey.
-        census_df = census_df[YEAR - census_df['BIRTHYR'] >= 18]
-        #remove anyone with family size over 40
-        census_df = census_df[census_df['FAMSIZE']<=40]
-        #sex clean up missing values
-        census_df= census_df[census_df['SEX'] != 9] 
-        #education. remove missing entries before mapping
-        census_df = census_df[census_df['EDUC'] != 99] 
+        HHP_recode_census(census_df, YEAR)
+        #census_df['PERWT'] = census_df['PERWT']
+        census_df = census_df[census_df['GQ'] == 1] #remove any institutionalized persons
+        census_df = census_df.filter(items=['PERWT'] + relevant_columns_global)
+        census_df = census_df.dropna()
 
-        census_df['STATEFIP'] = census_df['STATEFIP'].map(state_code_to_biden_pct)
+        #aggregate by unique data points, sum PERWT's
+        grouped_df = census_df.groupby(list(census_df.columns[1:]), as_index=False)['PERWT'].sum()
+        # Reorder columns so PERWT is first
+        cols = ['PERWT'] + [c for c in grouped_df.columns if c != 'PERWT']
+        combined_census_df = grouped_df[cols]
 
-        # REGION,EDUC,INCTOT,SEX,MARST,FAMSIZE,RACE,BIRTHYR
-        def recode_census_age(value):
-            if YEAR - value >= 85: 
-                return 5
-            elif YEAR - value >= 65:
-                return 4
-            elif YEAR - value >= 50:
-                return 3
-            elif YEAR - value >= 35:
-                return 2
-            elif YEAR - value >= 18:
-                return 1
-        census_df['BIRTHYR'] = census_df['BIRTHYR'].apply(recode_census_age)
-
-        def recode_census_region(value):
-            if 10 <= value <= 19:
-                return 1  # NorthEast
-            elif 20 <= value <= 29:
-                return 3  # MidWest
-            elif 30 <= value <= 39:
-                return 2  # South
-            elif 40 <= value <= 49:
-                return 4  # West
-            else:
-                return None  # Handle unexpected values
-        # Apply the recoding function to the region column in the census data
-        census_df['REGION'] = census_df['REGION'].apply(recode_census_region)
-
-
-        def map_income(value):
-            if value == -99:
-                return -99  # Question seen but not selected
-            elif value == -88:
-                return -88  # Missing / Did not report
-            elif value < 25000:
-                return 1  # Less than $25,000
-            elif 25000 <= value < 35000:
-                return 2  # $25,000 - $34,999
-            elif 35000 <= value < 50000:
-                return 3  # $35,000 - $49,999
-            elif 50000 <= value < 75000:
-                return 4  # $50,000 - $74,999
-            elif 75000 <= value < 100000:
-                return 5  # $75,000 - $99,999
-            elif 100000 <= value < 150000:
-                return 6  # $100,000 - $149,999
-            elif 150000 <= value < 200000:
-                return 7  # $150,000 - $199,999
-            else:
-                return 8  # $200,000 and above
-
-        census_df['INCTOT'] = census_df['INCTOT'].apply(map_income)
-
-        #survey marital
-        marital_status_map = {
-            1: 1,  # Married, spouse present -> Now married
-            2: 1,  # Married, spouse absent -> Now married
-            3: 4,  # Separated -> Separated
-            4: 3,  # Divorced -> Divorced
-            5: 2,  # Widowed -> Widowed
-            6: 5   # Never married/single -> Never married
-        }
-
-        # Recode the MARST column in the census data
-        census_df['MARST'] = census_df['MARST'].map(marital_status_map)
-
-        #race census
-        race_map = {
-            1: 1,  # White -> White, Alone
-            2: 2,  # Black/African American -> Black, Alone
-            3: 4,  # American Indian or Alaska Native -> Any other race alone, or race in combination
-            4: 3,  # Chinese -> Asian, Alone
-            5: 3,  # Japanese -> Asian, Alone
-            6: 3,  # Other Asian or Pacific Islander -> Asian, Alone
-            7: 4,  # Other race, nec -> Any other race alone, or race in combination
-            8: 4,  # Two major races -> Any other race alone, or race in combination
-            9: 4   # Three or more major races -> Any other race alone, or race in combination
-        }
-        census_df['RACE'] = census_df['RACE'].map(race_map)
-
-        educ_mapping = {
-            0: 1,  # N/A or no schooling
-            1: 1,  # Less than high school
-            2: 1,  # Less than high school
-            3: 1,  # Less than high school
-            4: 1,  # Less than high school
-            5: 1,  # Less than high school
-            6: 2,  # High school graduate
-            7: 3,  # Some college
-            8: 3,  # Some college
-            9: 3,  # Some college
-            10: 4, # Bachelor's degree
-            11: 5  # Graduate degree
-        }
-
-        # Recode the EDUC column in the census data
-        census_df['EDUC'] = census_df['EDUC'].map(educ_mapping)
-
-        #BIRTHYEAR just rename to AGE
-        census_df.rename(columns={'BIRTHYR':'AGE'},inplace=True)
-
-        #state ID rename to biden vote %
-        census_df.rename(columns={'STATEFIP':'BIDENPERC'},inplace=True)
-
-        relevant_columns_local = ['PERWT'] + relevant_columns_global
-        #REGION,EDUC,INCTOT,SEX,MARST,FAMSIZE,RACE, BIRTHYR
-        #deleting famsize because the categories are too different and BIDENPERC
-        census_df = census_df.filter(items=relevant_columns_local)
-
-        for col in census_df.columns:
-            ensure_zero_based_categories(census_df, col)
-            
-    return survey_df, census_df
+    return survey_df, census_df, combined_census_df
 
 def load_evenly_sampled_csv_rows(directory_path, K, target_var):
     # Get list of CSV files in the directory
@@ -345,7 +429,6 @@ def load_evenly_sampled_csv_rows(directory_path, K, target_var):
     # Determine how many rows to sample from each file
     base_rows = K // num_files
     remainder = K % num_files  # Distribute leftover rows evenly
-
     sampled_rows = []
 
     for i, csv_file in enumerate(csv_files):
@@ -357,6 +440,7 @@ def load_evenly_sampled_csv_rows(directory_path, K, target_var):
             
         nan_check = [target_var, 'REGION', 'EEDUC', 'INCOME', 'EGENDER', 'MS', 'RRACE', 'TBIRTH_YEAR', ]
         df = df.dropna(subset=nan_check)
+        df.drop(df[~df[target_var].isin([1, 2])].index, inplace=True)
 
         if df.empty:
             continue  # Skip empty files

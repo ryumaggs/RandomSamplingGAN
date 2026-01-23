@@ -290,80 +290,102 @@ def x_y_relationship(out):
     plt.tight_layout()
     plt.show()
         
-        
-def entropy_pred_relationship(runs_path, filter_by, num_runs):
+def oscillation_range_normalized(matrix):
+    """MAD normalized by per-row range, then averaged."""
+    ranges = np.ptp(matrix, axis=1)  # per-row (max-min)
+    # avoid div-by-zero by flooring range
+    ranges = np.maximum(ranges, 1e-12)
+    per_row_mad = np.mean(np.abs(np.diff(matrix, axis=1)), axis=1)
+    return np.mean(per_row_mad / ranges), np.mean(matrix,axis=1)
+
+def entropy_pred_relationship(runs_path, filter_by, num_runs,target_var_name):
     out, event_files = load_runs_as_numpy(runs_path,  
-                             ['EMPSTAT prediction', 'GenLoss', 'Gen Entropy', 
+                             [target_var_name, 'GenLoss', 'Gen Entropy', 
                               'tvd', 'Warmup', 'Bias score', 'Gradient Penalty'],
                              filter_by=filter_by,
                              num_runs=num_runs)
-    vpt = out['EMPSTAT prediction']
+    print("")
+    print("-----------------------------------")
+    print("Filter by: ", filter_by)
+    vpt = out[target_var_name]
     gloss = out['GenLoss']
     entropy = out['Gen Entropy']
     warmup = out['Warmup']
     bscore = out['Bias score']
     gp = out['Gradient Penalty']
-    indices_in_range = np.where((entropy[0] >= 0.75) & (entropy[0] <= 0.8))[0]
-    #t_f_scores = out['Truth - Fake scores']
     tvd = out['tvd']
+    print(vpt.shape)
+    #oscore, omean = oscillation_range_normalized(gp)
+    #tvd_score, tvd_mean = oscillation_range_normalized(tvd)
+    #print("Gradient Penalty: ")
+    #print("oscillation  score: ", oscore)
+    #print("average gp over time and exp: ", np.mean(omean))
+    #print("TVD: ")
+    #print("oscillation score: ", tvd_score)
+    #print("average gp over time and exp: ", np.mean(tvd_mean))
+    #indices_in_range = np.where((entropy[0] >= 0.75) & (entropy[0] <= 0.8))[0]
+    #t_f_scores = out['Truth - Fake scores']
+    
     order = np.arange(vpt.shape[0])
-    start_point = 50
-    end_point = 300 #len(entropy[0])
-    indices = np.arange(len(entropy[0,start_point:end_point]))
+    start_point = 0
+    end_point = 500 #len(entropy[0])
+    #indices = np.arange(len(entropy[0,start_point:end_point]))
     labels = ['entropy', 'truth-fake', 'tvd']
     selected_x_axis = entropy
     #vpt_b= vpt[:,start_point:end_point]
     #print((np.argmin(np.abs(vpt_b.mean(axis=0) - 0.6))) + start_point)
     #print((np.min(np.abs(vpt_b.mean(axis=0) - 0.6))))
     #if False: #old analysis 
-    for k in [1]: #, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]:
-        #k = 20  # number of smallest elements per row
-        # Get indices of the k smallest elements per row
-        idx = np.argpartition(selected_x_axis, k, axis=1)[:, :k]
-        # Use advanced indexing to gather corresponding B values
-        rows = np.arange(selected_x_axis.shape[0])[:, None]
-        selected_B = vpt[rows, idx]
-        #plt.scatter(selected_B, np.zeros_like(selected_B), alpha=0.6, s=20)
-        #plt.show()
-        # Compute row-wise means
-        mean_B = np.mean(selected_B, axis=1)
-        print(k, np.mean(mean_B),"||",np.std(mean_B))
-    return None
+    if True:
+        for k in [5]: #[1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]:
+            #k = 20  # number of smallest elements per row
+            # Get indices of the k smallest elements per row
+            idx = np.argpartition(selected_x_axis, k, axis=1)[:, :k]
+            # Use advanced indexing to gather corresponding B values
+            rows = np.arange(selected_x_axis.shape[0])[:, None]
+            selected_B = vpt[rows, idx]
+            #plt.scatter(selected_B, np.zeros_like(selected_B), alpha=0.6, s=20)
+            #plt.show()
+            # Compute row-wise means
+            mean_B = np.mean(selected_B, axis=1)
+            print(k, np.mean(mean_B),"|| +/- ",np.std(mean_B))
+        print("")
+        return None
 
-    fig, axs = plt.subplots(3, 3, figsize=(10, 10))
-    for i in order[0:9]:
-        name = ""
-        ''' puts the week/file as the name
-        parts = event_files[i].split("||", 2)
-        if len(parts) >= 3:
-            name = parts[1]
-        if i > vpt.shape[0]:
-            break
-        '''
-        #warmup_mean = np.mean(warmup[i,-50:])
-        name = "" #str(round(warmup_mean,3))
-        
-        row, col = divmod(i, 3)
-        minidx, _, smoothed = find_trend_plateau(vpt[i], smooth_sigma = 20)
-        print(minidx, np.mean(vpt[i,max(0,minidx-2):minidx+2]))
-        norm_entrop = normalize_0_1(entropy[i,start_point:end_point])
-        norm_tvd = normalize_0_1(tvd[i,start_point:end_point])
-        norm_score = normalize_0_1(bscore[i,start_point:end_point])
-        norm_gp = normalize_0_1(gp[i,start_point:end_point])
+        fig, axs = plt.subplots(3, 3, figsize=(10, 10))
+        for i in order[0:9]:
+            name = ""
+            ''' puts the week/file as the name
+            parts = event_files[i].split("||", 2)
+            if len(parts) >= 3:
+                name = parts[1]
+            if i > vpt.shape[0]:
+                break
+            '''
+            #warmup_mean = np.mean(warmup[i,-50:])
+            name = "" #str(round(warmup_mean,3))
+            
+            row, col = divmod(i, 3)
+            minidx, _, smoothed = find_trend_plateau(vpt[i], smooth_sigma = 20)
+            print(minidx, np.mean(vpt[i,max(0,minidx-2):minidx+2]))
+            norm_entrop = normalize_0_1(entropy[i,start_point:end_point])
+            norm_tvd = normalize_0_1(tvd[i,start_point:end_point])
+            norm_score = normalize_0_1(bscore[i,start_point:end_point])
+            norm_gp = normalize_0_1(gp[i,start_point:end_point])
 
-        x_axis =  entropy[i,start_point:end_point]
-        y_axis = vpt[i,start_point:end_point]
-        sc = axs[row,col].scatter(x_axis,y_axis,c=indices, cmap='viridis')
-        axs[row,col].set_title(name)
-        #sc = axs[row+1,col].scatter(t_f_scores[i,start_point:end_point],vpt[i,start_point:end_point],c=indices, cmap='viridis')
-        #sc = axs[row+2,col].scatter(tvd[i,start_point:end_point],vpt[i,start_point:end_point],c=indices, cmap='viridis')
-        #fig.text(0.05, 0.85 - i * 0.3, labels[i], va='center', ha='right', fontsize=12)
+            x_axis =  entropy[i,start_point:end_point]
+            y_axis = vpt[i,start_point:end_point]
+            sc = axs[row,col].scatter(x_axis,y_axis,c=indices, cmap='viridis')
+            axs[row,col].set_title(name)
+            #sc = axs[row+1,col].scatter(t_f_scores[i,start_point:end_point],vpt[i,start_point:end_point],c=indices, cmap='viridis')
+            #sc = axs[row+2,col].scatter(tvd[i,start_point:end_point],vpt[i,start_point:end_point],c=indices, cmap='viridis')
+            #fig.text(0.05, 0.85 - i * 0.3, labels[i], va='center', ha='right', fontsize=12)
 
-    if sc is not None:
-        cbar = fig.colorbar(sc, ax=axs, orientation='vertical', shrink=0.8)
-        cbar.set_label('Time Index')
+        if sc is not None:
+            cbar = fig.colorbar(sc, ax=axs, orientation='vertical', shrink=0.8)
+            cbar.set_label('Time Index')
 
-    return indices_in_range
+        return indices_in_range
 
     #data = np.load("./saves/data.npz")
     #weights = np.load("./saves/weight_history.npz")

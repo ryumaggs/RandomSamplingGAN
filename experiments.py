@@ -38,31 +38,35 @@ DEBUG_MODE = False
 
 BATCH_SIZE = 2
 SUBSET_SIZE = 32
-GENERATOR_TRAINING_FACTOR = 1
+GENERATOR_TRAINING_FACTOR = 0
 DISCRIMINATOR_TRAINING_FACTOR = 8
-GT_LIMIT = 125000
-BIAS_LIMIT = 2500
+GT_LIMIT = 50000
+BIAS_LIMIT = 2500 #10000
+SAVE_DICT = {}
+SAVE_DICT['SAVE_DATASET'] = False
+SAVE_DICT['SAVE_WEIGHTS'] = False
+SAVE_DICT['SAVE_IG'] = False
+SAVE_DICT['SAVE_GENERATOR'] = False
 
-LAMBDAGP = 10
-LAMBDAW = 1 #40
-LAMBDAD = 1
-LAMBDA_FIRST_LAYER = 1
-GENERATOR_LEARNING_RATE = 1e-5
-DISCRIMINATOR_LEARNING_RATE = 1e-4
+KLIEP_DOWNSAMPLE = BIAS_LIMIT
+LAMBDAGP = 10 #hold this at 10. higher = less discriminator expressability
+LAMBDAW = 0.006 #.00075 for 10k
+LAMBDAD = 13.5 #13.5
+LAMBDA_FIRST_LAYER = 0
+GENERATOR_LEARNING_RATE = 1e-5 #2e-3 or 1e-5
+DISCRIMINATOR_LEARNING_RATE = 1e-3 #1e-3 or 5e-5
 BATCHS_IN_EPOCH = 1
-EPOCHS = 10 #300 
-NUM_TRIALS = 2 #30
+EPOCHS = 500
+NUM_TRIALS = 1
 GEN_HISTORY_LENGTH = 0
 WARMUP_EPOCHS = 0
-SAVE_DATASET = False
-SAVE_WEIGHTS = True
-GEN_LAYERS = [1024, 1024, 1024] #[256 for _ in range(5)]
-DISC_LAYERS = [1024, 1024, 1024]
+GEN_LAYERS = [256] #[1024, 1024, 1024] #[256 for _ in range(5)]
+DISC_LAYERS = [256, 256]
 GEN_DROPOUT = 0.2
 DISC_DROPOUT = 0.2
 TEMPERATURE_START = 1
 TEMPERATURE_END = 0.3
-TEMPERATURE = 0.1
+TEMPERATURE = 1 #0.1
 
 DEBUG_MODE = False
 
@@ -81,32 +85,29 @@ if DEBUG_MODE:
 SAME_DATA_GT = False
 SAME_DATA_BIAS = False
 SAME_DATA_SEEN = False
-SAME_NETWORK_INIT = False
-#
-fixed_seed = [np.random.randint(1e6)]
+SAME_NETWORK_INIT = True
+'''
+what i need this seed to do is to be able to recreate an experiment while changing some small
+aspect of the randomness.
+
+e.g. keep everyting the same but use a different GT subset of the GT data. 
+
+Therefore fixed_seed should be a single seed and should be appended
+to all rngs NUM_TRIALS times. 
+
+
+'''
+fixed_seed = np.random.randint(1e6)
 all_rngs = []
 print('SETTING SEED: ', fixed_seed)
-if type(fixed_seed) == list:
-    for _ in range(NUM_TRIALS):
-        t_rng = []
-        for seed in fixed_seed:
-            t_rng.append(set_seed(seed,
-                                    device,
-                                data_init=[SAME_DATA_GT, SAME_DATA_BIAS],
-                                data_gen =SAME_DATA_SEEN,
-                                network_init=SAME_NETWORK_INIT,))
-        all_rngs.append(t_rng)
-else:
-    for _ in range(NUM_TRIALS):
-        all_rngs.append(set_seed(fixed_seed,
-                                device,
-                            data_init=[SAME_DATA_GT, SAME_DATA_BIAS],
-                            data_gen =SAME_DATA_SEEN,
-                            network_init=SAME_NETWORK_INIT,))
-
+for _ in range(NUM_TRIALS):
+    all_rngs.append(set_seed(fixed_seed,
+                            device,
+                        data_init=[SAME_DATA_GT, SAME_DATA_BIAS],
+                        data_gen =SAME_DATA_SEEN,
+                        network_init=SAME_NETWORK_INIT,))
 
 SAVE_EVERY = None
-
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # For dataset    
@@ -134,35 +135,41 @@ def check_identical_networks(gan1, gan2):
     print("Discriminator rhos: ", all(torch.equal(p1, p2) for p1, p2 in zip(gan1.discriminator.rho.parameters(), gan2.discriminator.rho.parameters())))
     print("Discriminator phis: ", all(torch.equal(p1, p2) for p1, p2 in zip(gan1.discriminator.phi.parameters(), gan2.discriminator.phi.parameters())))
 
-weeks = list(range(29,30))
+#weeks = list(range(8,9))
 #weeks = ['Syn']
 #weeks = ['ALL']
-#weeks = list(range(29,30)) + ['ALL']
+#weeks = ['lucid']
+weeks = list(range(29,30)) #for testing on HHP
+#weeks = [35, 37, 39, 40, 42, 43, 44, 45] #for axios ipsos
+#weeks = [20,21,22,23,24,25] #for d4p
+#weeks = [45]
 if __name__ == "__main__":
     for w in weeks:
         #make a new runs folder
         week = str(w)
         exp_vars = {}
-        exp_vars['disc_layers'] = [[256]]
-        #exp_vars['gen_layers'] = [[1024],[1024,1024],[1024,1024,1024]]
+        exp_vars['disc_layers'] = [[256],[256,256,256],[512],[512,512,512],[1024],[1024,1024,1024]]#[[256], [256, 256], [256, 256, 256], [512], [512,512], [512,512,512],[1024], [1024,1024], [1024,1024,1024]]
+        #exp_vars['gen_layers'] = [[1024]]
+        #exp_vars['gen_layers'] = [[256]]
         #exp_vars['learning_rates'] = [5e-5, 1e-5, 5e-6, 1e-6]
         #exp_vars['warmup_duration'] = [1000, 2000, 3000, 4000]
         #exp_vars['discriminator_dropout'] = [0.1, 0.2, 0.3]
         #exp_vars['dtrainingfactor'] = [8]
-        #exp_vars['gtrainingfactor'] = [4]
+        #exp_vars['gtrainingfactor'] = [1]
         #exp_vars['warmup_epochs'] = [0]
-        #exp_vars['lambda_gp'] = [10]
+        #exp_vars['lambdagp'] = [10]
         #exp_vars['dlearningrate'] = [5e-6]
         #exp_vars['glearningrate'] = [5e-6]
         #exp_vars['gt_limit'] = [GT_LIMIT]
-        #exp_vars['bias_limit'] = [BIAS_LIMIT]
-        #exp_vars['subset_size'] = [64,128,256]
+        #exp_vars['bias_limit'] = [2500]
+        #exp_vars['subset_size'] = [32,64,128,256]
         #exp_vars['gen_training_factor'] = [2]
-        #exp_vars['batch_size'] = [10]
-        #exp_vars['lambdaw'] = [500]
+        #exp_vars['batch_size'] = [1,2]
+        #exp_vars['lambdaw'] = [.003]
         #exp_vars['tau'] = [0.05, 0.25, 0.55, 0.75, 0.95]
         #exp_vars['columns_to_keep'] = [('EDUC', 'INCTOT', 'AGE')] #['REGION', 'EDUC', 'INCTOT', 'SEX', 'MARST', 'FAMSIZE', 'RACE','AGE', 'BIDENPERC']
-        #exp_vars['lambdad'] = [20]
+        #exp_vars['lambdad'] = [10]
+        #exp_vars['KLIEP_downsample'] = [5000]
         #exp_vars['lambda_first_layer'] = [0]
         #exp_vars['epochs'] = [1000]
         old_g = None
@@ -199,6 +206,7 @@ if __name__ == "__main__":
                         "epochs": EPOCHS,
                         "warmup_epochs": WARMUP_EPOCHS,
                         "lambda_first_layer": LAMBDA_FIRST_LAYER,
+                        "KLIEP_downsample": KLIEP_DOWNSAMPLE,
                     }
 
                     if exp_var == 'gt_limit':
@@ -211,15 +219,29 @@ if __name__ == "__main__":
                         raise NotImplementedError
                     
                     '''
-                    d = D4P_dataset(ground_truth_path='./data/censusHouseholdPulse_data/ipums_cleaned.csv',
-                                    bias_path = './data/progress_data/week'+week+'_cleaned.csv',
+                    d = Axios_ipsosdataset(ground_truth_path='./data/axios_ipsos_data/cleaned/ipums_cleaned.csv',
+                                    bias_path = './data/axios_ipsos_data/cleaned/week'+week+'_cleaned.csv',
                                     rngs=rngs,
+                                    label_information={'RECVDVACC':0}, #{'VAC':0, 'HLTHINS1':1},
                                     device=device,
+                                    columns_to_keep = None,
                                     gt_limit = GT_LIMIT,
+                                    bias_limit = BIAS_LIMIT, 
                                     )
-                    d = HouseholdPulse_dataset(ground_truth_path='./data/censusHouseholdPulse_data/cleaned/ipums_cleaned.csv',
-                                    bias_path = './data/censusHouseholdPulse_data/cleaned/pulse_week'+week+'_cleaned.csv',
+
+                    d = D4P_dataset(ground_truth_path='./data/progress_data/cleaned/ipums_cleaned_combined.csv',
+                                    bias_path = './data/progress_data/cleaned/d4p_week'+week+'_cleaned.csv',
                                     rngs=rngs,
+                                    label_information={'RECVDVACC':0}, #{'VAC':0, 'HLTHINS1':1},
+                                    device=device,
+                                    columns_to_keep = None,
+                                    gt_limit = GT_LIMIT,
+                                    bias_limit = BIAS_LIMIT, 
+                                    )
+                    d = HouseholdPulse_dataset(ground_truth_path='./data/HouseholdPulse_data/cleaned/ipums_cleaned_combined.csv',
+                                    bias_path = './data/HouseholdPulse_data/cleaned/pulse_week'+week+'_cleaned.csv',
+                                    rngs=rngs,
+                                    label_information={'RECVDVACC':0}, #{'VAC':0, 'HLTHINS1':1, 'RECVDVACC},
                                     device=device,
                                     columns_to_keep = None,
                                     gt_limit = GT_LIMIT,
@@ -234,17 +256,6 @@ if __name__ == "__main__":
                                     bias_limit = BIAS_LIMIT, 
                                     )
 
-                    d = Ari_dataset(ground_truth_path='./data/ari_survey/ipums_cleaned.csv',
-                                    bias_path = './data/ari_survey/aricleaned.csv',
-                                    rngs=rngs,
-                                    device=device,
-                                    columns_to_keep = None,
-                                    gt_limit = GT_LIMIT*len(rngs),
-                                    bias_limit = BIAS_LIMIT,
-                                    )
-                    
-                    
-
                     data_creation_counter = 0
                     try:
                         while True:
@@ -258,33 +269,31 @@ if __name__ == "__main__":
                     '''
                     #week='ALL'
                     directory = ""
-                    if SAVE_WEIGHTS or SAVE_DATASET:
+                    if any(SAVE_DICT.values()):
                         directory = "./saves_week"+str(week)
                         if not os.path.exists(directory):
                             os.makedirs(directory)
                             print(f"Directory '{directory}' created.")
                         else:
                             print(f"Directory '{directory}' already exists.")
-
-                    if type(rngs) == list:
-                        rngs = rngs[0]
                     
-                    d = HouseholdPulse_dataset(ground_truth_path='./data/censusHouseholdPulse_data/cleaned/ipums_cleaned.csv',
-                                    bias_path = './data/censusHouseholdPulse_data/cleaned/pulse_week'+week+'_cleaned.csv',
+                    d = HouseholdPulse_dataset(ground_truth_path='./data/HouseholdPulse_data/cleaned/ipums_cleaned_combined.csv',
+                                    bias_path = './data/HouseholdPulse_data/cleaned/pulse_week'+week+'_cleaned.csv',
                                     rngs=rngs,
+                                    label_information={'RECVDVACC':0}, #{'VAC':0, 'HLTHINS1':1, 'RECVDVACC},
                                     device=device,
                                     columns_to_keep = None,
                                     gt_limit = GT_LIMIT,
-                                    bias_limit = BIAS_LIMIT, 
-                                    )
+                                    bias_limit = BIAS_LIMIT,
+                    )
                     
-                    print("idealy 1k to 5k generaor updates...")
-                    print("N Generator updates: ", (EPOCHS * GT_LIMIT) / (BATCH_SIZE * hparams['dtrainingfactor']))
+                    #print("idealy 1k to 5k generator updates...")
+                    #print("N Generator updates: ", (EPOCHS * GT_LIMIT) / (BATCH_SIZE * hparams['dtrainingfactor']))
                     gan = WGAN_GP(
                                 rngs=rngs,
                                 dataset=d,
                                 generator_type='deepSet',
-                                discriminator_type='deepSet',
+                                discriminator_type='deepSetComplex',
                                 gen_learning_rate=hparams["glearningrate"],
                                 disc_learning_rate=hparams["dlearningrate"],
                                 batch_size=hparams["batch_size"],
@@ -302,10 +311,11 @@ if __name__ == "__main__":
                                 lambda_first_layer=hparams["lambda_first_layer"],
                                 generator_dropout=hparams["generator_dropout"],
                                 discriminator_dropout=hparams["discriminator_dropout"],
-                                save_dataset=SAVE_DATASET,
-                                save_weights=SAVE_WEIGHTS,
+                                KLIEP_downsample=hparams['KLIEP_downsample'],
+                                save_dict=SAVE_DICT,
                                 save_dir = directory,
                             )
+
                     synthetic = (weeks[0] == 'SYN')
                     if synthetic: #synthetic data experiments
                         writer = SummaryWriter(comment='Variables=' + str(d.column_names) + '||Cell=' + str(d.upscaled_cell)+'||seed:'+str(rngs['seed_bias']))

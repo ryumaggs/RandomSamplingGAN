@@ -1,6 +1,13 @@
 import torch
 import numpy as np
 import random
+import pandas as pd
+import matplotlib
+import matplotlib.pyplot as plt
+
+def rename_check(df, old_name, new_name=None):
+    if new_name is not None:
+        df.rename(columns={old_name: new_name}, inplace=True)
 
 def compute_data_shape(embedding_dict,X_tensor):
     '''
@@ -31,21 +38,26 @@ def embed_data(embedding_layers,embedding_dict,X_tensor,overrite_start_idx=0):
     '''
     requires input to be torch tensor
     '''
+    if not isinstance(X_tensor, torch.Tensor):
+        X_local = torch.tensor(X_tensor)
+    else:
+        X_local = X_tensor
     encoded_features = []
-    for feat_idx in range(X_tensor.shape[1]):
+    for feat_idx in range(X_local.shape[1]):
         if feat_idx in embedding_dict:
             nfi = feat_idx + overrite_start_idx
             method = embedding_dict[nfi][0]
             original_size = embedding_dict[nfi][1]
             new_size = embedding_dict[nfi][2]
             if method == "embed":
-                out = embedding_layers[nfi](X_tensor[:, feat_idx].long())
+                out = embedding_layers[nfi](X_local[:, feat_idx].long())
             elif method == "onehot":
-                out = torch.nn.functional.one_hot(X_tensor[:, feat_idx].long(), num_classes=original_size).float()
+                out = torch.nn.functional.one_hot(X_local[:, feat_idx].long(), num_classes=original_size).float()
             encoded_features.append(out)
         else:
             # keep raw feature (as float)
-            encoded_features.append(X_tensor[:, feat_idx].float().unsqueeze(1))
+            encoded_features.append(X_local[:, feat_idx].float().unsqueeze(1))
+
     final_tensor = torch.cat(encoded_features, dim=1)
     return final_tensor
 
@@ -252,3 +264,144 @@ def warmup_spectral_norm(model, input_shape, device=torch.device('cuda:0'), step
     dummy_input = torch.randn(*input_shape).to(device)
     for _ in range(steps):
         _ = model(dummy_input)
+
+def plot_heatmaps(matrices, labels_dict=None, titles=None):
+    """
+    Plots a list of square matrices as heatmaps with properly aligned top labels.
+    """
+    cmap = matplotlib.cm.get_cmap("seismic").copy()
+    cmap.set_bad(color="white")
+
+    n = len(matrices)
+    cols = int(np.ceil(np.sqrt(n)))
+    rows = int(np.ceil(n / cols))
+
+    fig, axes = plt.subplots(rows, cols, figsize=(4*cols, 4*rows), constrained_layout=True)
+    axes = np.array(axes).reshape(-1)
+
+    # Global symmetric color limits
+    all_vals = np.concatenate([M.flatten() for M in matrices])
+    vmax = max(abs(all_vals.min()), abs(all_vals.max()))
+    vmin = -vmax
+
+    for i, M in enumerate(matrices):
+        size = M.shape[0]
+        M_masked = np.ma.array(M, mask=np.eye(size, dtype=bool))
+        ax = axes[i]
+
+        im = ax.imshow(M_masked, cmap=cmap, vmin=vmin, vmax=vmax, interpolation='nearest')
+
+        # Labels
+        if labels_dict and i in labels_dict:
+            labels = labels_dict[i]
+        else:
+            labels = [str(j) for j in range(size)]
+
+        # Explicit tick positions
+        positions = np.arange(size)
+
+        # X-axis (bottom)
+        ax.set_xticks(positions)
+        ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=8)
+
+        # X-axis (top)
+        ax_top = ax.twiny()
+        ax_top.set_xlim(ax.get_xlim())
+        ax_top.set_xticks(positions)
+        ax_top.set_xticklabels(labels, rotation=45, ha='center', fontsize=8)
+        ax_top.xaxis.set_ticks_position('top')
+        ax_top.xaxis.set_label_position('top')
+
+        # Y-axis
+        ax.set_yticks(positions)
+        ax.set_yticklabels(labels, fontsize=8)
+
+        # Masked diagonal
+        ax.imshow(M_masked, cmap=cmap, vmin=vmin, vmax=vmax, interpolation='nearest')
+
+        if titles:
+            ax.set_title(titles[i])
+
+        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    # Hide unused axes
+    for j in range(len(matrices), len(axes)):
+        axes[j].axis('off')
+
+    plt.show()
+
+def plot_heatmaps_multiplicative(matrices, labels_dict=None, titles=None):
+    """
+    Plots multiplicative-scale heatmaps using SymLogNorm for better visibility.
+    Input matrices are raw logit differences.
+    """
+    # Convert logits → multiplicative
+    mult_matrices = [np.exp(M) for M in matrices]
+
+    cmap = matplotlib.cm.get_cmap("seismic").copy()
+    cmap.set_bad(color="white")
+
+    n = len(mult_matrices)
+    cols = int(np.ceil(np.sqrt(n)))
+    rows = int(np.ceil(n / cols))
+
+    fig, axes = plt.subplots(rows, cols, figsize=(4*cols, 4*rows), constrained_layout=True)
+    axes = np.array(axes).reshape(-1)
+
+    # Global vmin/vmax
+    all_vals = np.concatenate([M.flatten() for M in mult_matrices])
+    vmin = all_vals.min()
+    vmax = all_vals.max()
+
+    # Symmetric around 1
+    # linthresh controls sensitivity near 1 (5% recommended)
+    norm = matplotlib.colors.SymLogNorm(
+        linthresh=0.05,  # ±5% region is linear
+        vmin=vmin,
+        vmax=vmax,
+        base=10
+    )
+
+    for i, M in enumerate(mult_matrices):
+        size = M.shape[0]
+
+        # Mask the diagonal
+        M_masked = np.ma.array(M, mask=np.eye(size, dtype=bool))
+
+        ax = axes[i]
+        im = ax.imshow(M_masked, cmap=cmap, norm=norm, interpolation='nearest')
+
+        # Labels
+        if labels_dict and i in labels_dict:
+            labels = labels_dict[i]
+        else:
+            labels = [str(j) for j in range(size)]
+
+        positions = np.arange(size)
+
+        # Bottom x-axis
+        ax.set_xticks(positions)
+        ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=8)
+
+        # Top x-axis
+        ax_top = ax.twiny()
+        ax_top.set_xlim(ax.get_xlim())
+        ax_top.set_xticks(positions)
+        ax_top.set_xticklabels(labels, rotation=45, ha='center', fontsize=8)
+        ax_top.xaxis.set_ticks_position('top')
+
+        # Y-axis
+        ax.set_yticks(positions)
+        ax.set_yticklabels(labels, fontsize=8)
+
+        if titles:
+            ax.set_title(titles[i])
+
+        # Colorbar
+        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    # Hide unused subplots
+    for j in range(len(mult_matrices), len(axes)):
+        axes[j].axis('off')
+
+    plt.show()

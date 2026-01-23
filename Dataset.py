@@ -74,49 +74,12 @@ class XBoxDatasetSimulation():
         print(df.shape)
         return df
 
-class Axios_ipsosdataset():
-    def __init__(self,
-                 ground_truth_path,
-                 bias_path,
-                 device=None,
-                 gt_limit = 5000,):
-        self.type = 'real'
-        self.device = device
-        self.gt_limit = gt_limit
-        self.biased_dataset = self.load_csv(bias_path).to_numpy(dtype=np.float, na_value=0)
-        raw_gt_load = self.load_csv(ground_truth_path)
-        self.biased_labels = self.biased_dataset[:,-1]
-        self.scaler = StandardScaler()
-        self.ground_truth_dataset = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT']).to_numpy(dtype=np.float, na_value=0)
-        del raw_gt_load
-        self.scaler = self.scaler.fit(self.ground_truth_dataset[:self.gt_limit,1:])
-        self.ground_truth_dataset = self.scaler.transform(self.ground_truth_dataset[:self.gt_limit,1:])
-        self.biased_dataset = self.scaler.transform(self.biased_dataset[:,1:-1])
-
-        self.ground_truth = None
-        self.ground_truth_demographics = None
-        #bias has axios weights in column 0 and vaccinated status in column -1
-        #gt has census weights in column 0
-        self.ground_truth_dataset = torch.tensor(self.ground_truth_dataset,device=self.device,dtype=torch.float32)
-        self.biased_dataset = torch.tensor(self.biased_dataset,device=self.device,dtype=torch.float32)
-        
-
-    def load_csv(self, ground_truth_path):
-        try:
-            df = pd.read_csv(ground_truth_path)
-        except Exception as e:
-            print(e)
-            print('error occured')
-            exit(1)
-        
-        return df
-
 class HouseholdPulse_dataset():
     def __init__(self,
                  ground_truth_path,
                  bias_path,
                  rngs,
-                 num_labels=1,
+                 label_information,
                  device=None,
                  columns_to_keep = None,
                  gt_limit = 5000,
@@ -125,38 +88,24 @@ class HouseholdPulse_dataset():
         self.device = device
         self.gt_limit = gt_limit
         self.bias_limit = bias_limit
-        self.num_labels = num_labels
+        self.label_names = list(label_information.keys())
+
+        self.label_indexes = list(label_information.values())
+        self.num_labels = len(label_information)
         raw_bias_load = self.load_csv(bias_path)#.to_numpy(dtype=np.float, na_value=0)
         raw_gt_load = self.load_csv(ground_truth_path)
         self.embedding_dict = self.create_embedding_dictionary(raw_gt_load)
         self.num_categories_per_features = [raw_gt_load[col].nunique() for col in raw_gt_load.columns]
         self.num_categories_per_features = self.num_categories_per_features[1:]
-        
-        if type(rngs) == list:
-            gt_list = []
-            bd_list = []
-            for rng in rngs:
-                gtd, bd = self.load_data_with_rngs(columns_to_keep,
-                                                    raw_bias_load,
-                                                    self.bias_limit,
-                                                    raw_gt_load,
-                                                    self.gt_limit,
-                                                    rng)
-                bd_list.append(bd)
-                gt_list.append(gtd)
-            self.ground_truth_dataset = np.concatenate(gt_list, axis=0)
-            self.biased_dataset = np.concatenate(bd_list, axis=0)
-        else:
-            self.ground_truth_dataset, self.biased_dataset, self.biased_labels = self.load_data_with_rngs(
-                                                                            columns_to_keep,
-                                                                            raw_bias_load,
-                                                                            bias_limit,
-                                                                            raw_gt_load,
-                                                                            gt_limit,
-                                                                            rngs)
+        self.ground_truth_dataset, self.gt_weights, self.biased_dataset, self.biased_labels = self.load_data_with_rngs(
+                                                                        columns_to_keep,
+                                                                        raw_bias_load,
+                                                                        bias_limit,
+                                                                        raw_gt_load,
+                                                                        gt_limit,
+                                                                        rngs)
         del raw_gt_load
         del raw_bias_load 
-
         self.synthetic_label_1 = None
         self.synthetic_label_2 = None
         self.var_setup()
@@ -198,13 +147,12 @@ class HouseholdPulse_dataset():
 
         self.ground_truth = None
         self.ground_truth_demographics = None
-        
+
         self.gt_cpu = self.ground_truth_dataset
         self.bias_cpu = self.biased_dataset
 
-        self.ground_truth_dataset = torch.tensor(self.ground_truth_dataset,device=self.device,dtype=torch.float32)
+        self.ground_truth_dataset = torch.tensor(self.ground_truth_dataset,device='cpu',dtype=torch.float32)
         self.biased_dataset = torch.tensor(self.biased_dataset,device=self.device,dtype=torch.float32)
-
         self.ground_truth_dataset = embed_data(None,self.embedding_dict,self.ground_truth_dataset)
         self.biased_dataset = embed_data(None,self.embedding_dict,self.biased_dataset).unsqueeze(0)
 
@@ -244,31 +192,32 @@ class HouseholdPulse_dataset():
             census_columns_to_keep = ['PERWT']
             census_columns_to_keep.extend(list(columns_to_keep))
             gtd = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rngs['seed_gt'])[census_columns_to_keep].to_numpy(dtype=np.float, na_value=0)
-            survey_columns_to_keep = ['RECVDVACC']
+            survey_columns_to_keep = ['HLTHINS1'] #HLTHINS1 or RECVDVACC
             survey_columns_to_keep.extend(list(columns_to_keep))
             if bias_limit >= raw_bias_load.shape[0]:
                 bd = raw_bias_load[survey_columns_to_keep].to_numpy(dtype=np.float, na_value=0)
             else:
                 bd = raw_bias_load.sample(n=bias_limit,random_state=rngs['seed_bias'])[survey_columns_to_keep].to_numpy(dtype=np.float, na_value=0)
-
         else:
-            gtd = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rngs['seed_gt'])
-            #print("AAA: ", [raw_gt_load[col].max() for col in raw_gt_load.columns])
-            #print("BBB: ", num_categories_per_features)
+            gtd = None
+            if gt_limit < raw_gt_load.shape[0]:
+                gtd = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rngs['seed_gt'])
+            else:
+                gtd = raw_gt_load
             gtd = gtd.to_numpy(dtype=np.float, na_value=0)
+            
             if bias_limit > raw_bias_load.shape[0]:
                 bd = raw_bias_load.to_numpy(dtype=np.float, na_value=0)
             else:
                 bd = raw_bias_load.sample(n=bias_limit,random_state=rngs['seed_bias'])
-                num_categories_per_features = [raw_gt_load[col].nunique() for col in raw_gt_load.columns]
                 bd = bd.to_numpy(dtype=np.float, na_value=0)
 
-            bl = bd[:,:self.num_labels]
+            bl = bd[:,self.label_indexes]
             for nl in range(self.num_labels):
                 print("uniform avg target: ", sum(bl[:,nl])/len(bl[:,nl]))
             
             print(gtd.shape, bd.shape, bl.shape)
-        return gtd[:,1:], bd[:,self.num_labels:], bl
+        return gtd[:,1:], gtd[:,0], bd[:,self.num_labels:], bl
     
     def create_combination_id_mapping(self,np1, np2):
         #convert both to pandas df
@@ -312,6 +261,10 @@ class HouseholdPulse_dataset():
             exit(1)
         
         return df
+
+class Axios_ipsosdataset(HouseholdPulse_dataset):
+    def dummy(self):
+        pass
 
 class HouseholdPulse_synthetic(HouseholdPulse_dataset):
     def __init__(self,
@@ -557,99 +510,9 @@ class Ari_dataset(HouseholdPulse_dataset):
     def dummy(self):
         pass
 
-class D4P_dataset():
-    def __init__(self,
-                 ground_truth_path,
-                 bias_path,
-                 rngs,
-                 device=None,
-                 gt_limit = 5000, ):
-        self.type = 'real'
-        self.device = device
-        self.gt_limit = gt_limit
-
-        raw_bias_load = self.load_csv(bias_path)#.to_numpy(dtype=np.float, na_value=0)
-        raw_gt_load = self.load_csv(ground_truth_path)
-        #sample ground truth by gt limit
-        '''
-        gt columns = ['PERWT', 'REGION', 'EDUC', 'INCTOT', 'SEX', 'MARST', 'FAMSIZE', 'RACE',
-        'AGE', 'BIDENPERC'],
-        '''
-        columns_to_keep = list(raw_bias_load.columns)[1:]
-        self.biased_dataset = raw_bias_load.to_numpy(dtype=np.float, na_value=0)
-        if columns_to_keep is not None:
-            census_columns_to_keep = ['PERWT']
-            census_columns_to_keep.extend(list(columns_to_keep))
-            self.ground_truth_dataset = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rngs['seed_gt'])[census_columns_to_keep].to_numpy(dtype=np.float, na_value=0)
-        del raw_gt_load
-        del raw_bias_load 
-
-        self.biased_labels = self.biased_dataset[:,0]
-        print("uniform avg vaccine: ", sum(self.biased_labels)/len(self.biased_labels))
-        self.unscaled_ground_truth = self.ground_truth_dataset[:,1:]
-        self.unscaled_biased = self.biased_dataset[:,1:]
-        test = np.concatenate((self.ground_truth_dataset[:,1:],self.biased_dataset[:,1:]))
-        self.scaler = StandardScaler()        
-        #self.scaler = self.scaler.fit(self.ground_truth_dataset[:,1:])
-        self.scaler = self.scaler.fit(test)
-        self.ground_truth_dataset = self.scaler.transform(self.ground_truth_dataset[:,1:])
-        self.biased_dataset = self.scaler.transform(self.biased_dataset[:,1:])
-        self.ground_truth = None
-        self.ground_truth_demographics = None
-
-        self.unscaled_ground_truth, self.unscaled_biased = self.create_combination_id_mapping(self.unscaled_ground_truth,
-                                                                                                self.unscaled_biased)
-
-        #bias has axios weights in column 0 and vaccinated status in column -1
-        #gt has census weights in column 0
-        self.gt_cpu = self.ground_truth_dataset
-        self.bias_cpu = self.biased_dataset
-
-        self.ground_truth_dataset = torch.tensor(self.ground_truth_dataset,device=self.device,dtype=torch.float32)
-        self.biased_dataset = torch.tensor(self.biased_dataset,device=self.device,dtype=torch.float32)
-    
-    def load_csv(self, ground_truth_path):
-        try:
-            df = pd.read_csv(ground_truth_path)
-        except Exception as e:
-            print(e)
-            print('error occured')
-            exit(1)
-        
-        return df
-    
-    def create_combination_id_mapping(self,np1, np2):
-        #convert both to pandas df
-        df1 = pd.DataFrame(np1)
-        df2 = pd.DataFrame(np2)
-
-        combos_df1 = df1.apply(tuple, axis=1)
-        combos_df2 = df2.apply(tuple, axis=1)
-
-        # Factorize to get unique IDs
-        ids, uniques = pd.factorize(combos_df1)
-        ids, uniques2 = pd.factorize(combos_df2)
-        
-        # Store mapping as a dictionary
-        combo_to_id = {combo: idx for idx, combo in enumerate(uniques)}
-        for combo in uniques2:
-            if combo not in combo_to_id:
-                combo_to_id[combo] = len(combo_to_id)
-        #apply mapping
-        df1['combo_id'] = combos_df1.map(combo_to_id)
-        df2['combo_id'] = combos_df2.map(combo_to_id)
-        #counting unique combinations
-        set1 = set(df1['combo_id'].unique())
-        set2 = set(df2['combo_id'].unique())
-
-        # Values unique to each DataFrame
-        only_in_df1 = set1 - set2
-        only_in_df2 = set2 - set1
-        print("Values only in df1:", len(only_in_df1))
-        print("Values only in df2:", len(only_in_df2))
-
-        #convert back to numpy
-        return df1.to_numpy(), df2.to_numpy()
+class D4P_dataset(HouseholdPulse_dataset):
+    def dummy(self):
+        pass
     
 class RealPredictionDataset():
     def __init__(self,
