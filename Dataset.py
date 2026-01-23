@@ -1,4 +1,3 @@
-#global imports
 import numpy as np
 import random
 import csv
@@ -6,14 +5,11 @@ from tqdm import tqdm
 from scipy.special import softmax
 import pandas as pd
 import torch
+from util import dict2vector, normalize_to_minus1_plus1, embed_data
 from DataProcessing import *
 from sklearn.preprocessing import StandardScaler
-
+from HouseholdCensusDataProcessing import *
 from matplotlib import pyplot as plt
-
-#local imports
-from main.util import dict2vector, normalize_to_minus1_plus1, embed_data
-from DataProcessing.HouseholdCensusDataProcessing import *
 
 class XBoxDatasetSimulation():
     def __init__(self,

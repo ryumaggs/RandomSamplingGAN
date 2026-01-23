@@ -10,7 +10,6 @@ import copy
 from tqdm import tqdm
 import csv
 from scipy.special import softmax
-device = torch.device('cuda:0')
 import random
 import os
 from datetime import datetime
@@ -36,54 +35,63 @@ from DataProcessing.GeneralDataProcessing import *
 #NEW TRAINING VARIABLE SET UP
 # For learning
 #runs_consistency_SameData_SameSeen_diffNetwork,Seed:359556
+DEBUG_MODE = False
 BATCH_SIZE = 2
 SUBSET_SIZE = 32
 GENERATOR_TRAINING_FACTOR = 1
-DISCRIMINATOR_TRAINING_FACTOR = 200
-GT_LIMIT = 25000
-BIAS_LIMIT = 2500
-LAMBDAGP = 10
-LAMBDAW = 1 #40
-LAMBDAD = 1
-GENERATOR_LEARNING_RATE = 1e-5
-DISCRIMINATOR_LEARNING_RATE = 1e-4
+DISCRIMINATOR_TRAINING_FACTOR = 8
+GT_LIMIT = 50000
+BIAS_LIMIT = 10000 #10000
+SAVE_DICT = {}
+SAVE_DICT['SAVE_DATASET'] = False
+SAVE_DICT['SAVE_WEIGHTS'] = False
+SAVE_DICT['SAVE_IG'] = False
+SAVE_DICT['SAVE_GENERATOR'] = False
+
+KLIEP_DOWNSAMPLE = BIAS_LIMIT
+LAMBDAGP = 10 #hold this at 10. higher = less discriminator expressability
+LAMBDAW = 0.001 #.00075 for 10k
+LAMBDAD = 13.5 #13.5
+LAMBDA_FIRST_LAYER = 0
+GENERATOR_LEARNING_RATE = 1e-5 #2e-3 or 1e-5
+DISCRIMINATOR_LEARNING_RATE = 5e-5 #1e-3 or 5e-5
 BATCHS_IN_EPOCH = 1
-EPOCHS = 100 # the stream is infinite so one epoch will be defined as BATCHS_IN_EPOCH * BATCH_SIZE
+EPOCHS = 300
 NUM_TRIALS = 1
 GEN_HISTORY_LENGTH = 0
-WARMUP_EPOCHS = 600
-
-SAME_DATA_GT = False
-SAME_DATA_BIAS = False
-SAME_DATA_SEEN = False
-SAME_NETWORK_INIT = False
+WARMUP_EPOCHS = 0
+GEN_LAYERS = [1024, 1024, 1024] #[256 for _ in range(5)]
+DISC_LAYERS = [256, 256]
+GEN_DROPOUT = 0.2
+DISC_DROPOUT = 0.2
+TEMPERATURE_START = 1
+TEMPERATURE_END = 0.3
+TEMPERATURE = 0.1
 
 DEBUG_MODE = False
 
 if DEBUG_MODE:
     BATCH_SIZE=2
     SUBSET_SIZE=2
-    DISCRIMINATOR_TRAINING_FACTOR = 5
-    EPOCHS = 10
+    DISCRIMINATOR_TRAINING_FACTOR = 2
+    BIAS_LIMIT = 5
+    EPOCHS = 30
     NUM_TRIALS = 1
-    WARMUP_EPOCHS = 20
+    WARMUP_EPOCHS = 10
+    SAVE_DATASET = False
+    SAVE_WEIGHTS = False
 
 SAVE_EVERY = None
-
-GEN_DROPOUT = 0.2
-DISC_DROPOUT = 0.2
+SAME_DATA_GT = False
+SAME_DATA_BIAS = False
+SAME_DATA_SEEN = False
+SAME_NETWORK_INIT = True
 
 #measures of consistency
 
-TEMPERATURE_START = 1
-TEMPERATURE_END = 0.3
-TEMPERATURE = 0.1
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # For dataset
 zero_prob = 0
-    
-GEN_LAYERS = [1024, 1024, 1024] #[256 for _ in range(5)]
-DISC_LAYERS = [1024, 1024, 1024]
 
 generator_types = ['dataGen'] #['dataGen','weightsGen','onesGen']
 
@@ -103,8 +111,7 @@ Experiments to be done:
 def train(census_dataset_path,
           survey_dataset_path,
           save_path,
-          save_dataset,
-          save_weights,
+          save_dict,
           num_trials):
     '''
     census_dataset_path- str, path to census data csv
@@ -137,68 +144,77 @@ def train(census_dataset_path,
                                 data_gen =SAME_DATA_SEEN,
                                 network_init=SAME_NETWORK_INIT,))
     for tid in range(num_trials):
+        trial_save_path = os.path.join(save_path,"trial_"+str(tid)+"/")
+        if not os.path.isdir(trial_save_path):
+            os.mkdir(trial_save_path)
+
         print("-----------------------------------")
         print("RUN:", tid+1, "/", num_trials)
         print("")
         rngs = all_rngs[tid][0]
         hparams = {
-        "glearningrate": GENERATOR_LEARNING_RATE,
-        "dlearningrate": DISCRIMINATOR_LEARNING_RATE,
-        "gen_layers": GEN_LAYERS,
-        "disc_layers": DISC_LAYERS,
-        "wudur": warmup_durations[0],
-        "generator_dropout": GEN_DROPOUT,
-        "discriminator_dropout": DISC_DROPOUT,
-        "gtrainingfactor": GENERATOR_TRAINING_FACTOR,
-        "dtrainingfactor": DISCRIMINATOR_TRAINING_FACTOR,
-        "subset_size": SUBSET_SIZE,
-        "batch_size": BATCH_SIZE,
-        "lambdagp": LAMBDAGP,
-        "lambdaw": LAMBDAW,
-        "lambdad": LAMBDAD,
-        "tau": TEMPERATURE,
-        "gen_history_length": GEN_HISTORY_LENGTH,
-        "epochs": EPOCHS,
-        "warmup_epochs": WARMUP_EPOCHS,
-    }
+            "glearningrate": GENERATOR_LEARNING_RATE,
+            "dlearningrate": DISCRIMINATOR_LEARNING_RATE,
+            "gen_layers": GEN_LAYERS,
+            "disc_layers": DISC_LAYERS,
+            "wudur": warmup_durations[0],
+            "generator_dropout": GEN_DROPOUT,
+            "discriminator_dropout": DISC_DROPOUT,
+            "gtrainingfactor": GENERATOR_TRAINING_FACTOR,
+            "dtrainingfactor": DISCRIMINATOR_TRAINING_FACTOR,
+            "subset_size": SUBSET_SIZE,
+            "batch_size": BATCH_SIZE,
+            "lambdagp": LAMBDAGP,
+            "lambdaw": LAMBDAW,
+            "lambdad": LAMBDAD,
+            "tau": TEMPERATURE,
+            "gen_history_length": GEN_HISTORY_LENGTH,
+            "epochs": EPOCHS,
+            "warmup_epochs": WARMUP_EPOCHS,
+            "lambda_first_layer": LAMBDA_FIRST_LAYER,
+            "KLIEP_downsample": KLIEP_DOWNSAMPLE,
+        }
         
         d = HouseholdPulse_dataset(ground_truth_path=census_dataset_path,
                         bias_path = survey_dataset_path,
                         rngs=rngs,
+                        label_information = {'RECVDVACC':0},
                         device=device,
                         columns_to_keep = None,
                         gt_limit = GT_LIMIT,
                         bias_limit = BIAS_LIMIT, 
                         )
         
+
         gan = WGAN_GP(
-                rngs=rngs,
-                dataset=d,
-                generator_type='deepSet',
-                discriminator_type='deepSet',
-                gen_learning_rate=hparams["glearningrate"],
-                disc_learning_rate=hparams["dlearningrate"],
-                batch_size=hparams["batch_size"],
-                truth_sample_size=hparams["subset_size"],
-                gen_layers=hparams["gen_layers"],
-                disc_layers=hparams["disc_layers"],
-                bias_sample_size=hparams["subset_size"],
-                lambda_gp=hparams["lambdagp"],
-                lambda_weights=hparams["lambdaw"],
-                lambda_demo=hparams["lambdad"],
-                gen_history_length=hparams["gen_history_length"],
-                temperature=hparams["tau"],
-                warmup_length=hparams["wudur"],
-                lambda_regularizer=0,
-                generator_dropout=hparams["generator_dropout"],
-                discriminator_dropout=hparams["discriminator_dropout"],
-                save_dataset=save_dataset,
-                save_weights=save_weights,
-                save_dir = save_path,
-            )
+            rngs=rngs,
+            dataset=d,
+            generator_type='deepSet',
+            discriminator_type='deepSet',
+            gen_learning_rate=hparams["glearningrate"],
+            disc_learning_rate=hparams["dlearningrate"],
+            batch_size=hparams["batch_size"],
+            truth_sample_size=hparams["subset_size"],
+            gen_layers=hparams["gen_layers"],
+            disc_layers=hparams["disc_layers"],
+            bias_sample_size=hparams["subset_size"],
+            lambda_gp=hparams["lambdagp"],
+            lambda_weights=hparams["lambdaw"],
+            lambda_demo=hparams["lambdad"],
+            gen_history_length=hparams["gen_history_length"],
+            temperature=hparams["tau"],
+            warmup_length=hparams["wudur"],
+            lambda_regularizer=0,
+            lambda_first_layer=hparams["lambda_first_layer"],
+            generator_dropout=hparams["generator_dropout"],
+            discriminator_dropout=hparams["discriminator_dropout"],
+            KLIEP_downsample=hparams['KLIEP_downsample'],
+            save_dict= save_dict,
+            save_dir = trial_save_path,
+        )
 
         comment = "runs"
-        base_logdir = "./saves"
+        base_logdir = save_path
 
         log_dir = os.path.join(
             base_logdir,
@@ -214,24 +230,22 @@ def train(census_dataset_path,
         
         writer.add_hparams(hparams,{})
 
+
         weights, bias_labels, prob_diffs,  test_probs, test_prob_diffs, generator_losses, discriminator_losses  = gan.train(BATCHS_IN_EPOCH,
-                                                                                                                                    hparams['epochs'],
-                                                                                                                                    hparams['warmup_epochs'],
-                                                                                                                                    TEMPERATURE_START,
-                                                                                                                                    TEMPERATURE_END,
-                                                                                                                                    hparams['gtrainingfactor'],
-                                                                                                                                    hparams['dtrainingfactor'],
-                                                                                                                                    SAVE_EVERY,
-                                                                                                                                    writer,
-                                                                                                                                    tid)
-        predicted_target = (weights @ bias_labels).item()
+                                                                                                                                hparams['epochs'],
+                                                                                                                                hparams['warmup_epochs'],
+                                                                                                                                TEMPERATURE_START,
+                                                                                                                                TEMPERATURE_END,
+                                                                                                                                hparams['gtrainingfactor'],
+                                                                                                                                hparams['dtrainingfactor'],
+                                                                                                                                SAVE_EVERY,
+                                                                                                                                writer,
+                                                                                                                                tid,
+                                                                                                                                synthetic=False,
+                                                                                                                                synthetic_col_names=[''])
         
         #results.append((exp_var,cvar,predicted_target))
 
         #with open('./results.pkl', 'wb') as file:
         #    pickle.dump(results,file)
         writer.close()
-
-    #rename the runs folder into its appropriate name
-    #if NUM_TRIALS > 1:
-    #    os.rename("./runs", "./runs_week"+str(w))

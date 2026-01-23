@@ -52,17 +52,16 @@ def load_runs_as_numpy(runs_path, var_names, filter_by, num_runs=20):
     return all_data, event_files
 
 
-def save_final_median(path_to_saves,):
-
+def save_final_median(path_to_saves):
     runs_path = path_to_saves+"/runs/"
     all_outs = {}
     out, _ = load_runs_as_numpy(runs_path,  
-                             ['target prediction', 'GenLoss', 'Gen Entropy', 
+                             ['RECVDVACC prediction', 'GenLoss', 'Gen Entropy', 
                               'tvd', 'Warmup', 'Bias score', 'Gradient Penalty'],
                              filter_by=[""],
                              num_runs=20)
     entropy = out['Gen Entropy']
-    vpt = out['target prediction']
+    vpt = out['RECVDVACC prediction']
     all_min_entropy_idx = np.argmin(entropy,axis=1)
     all_min_entropy_preds = []
     for i, amei in enumerate(all_min_entropy_idx):
@@ -74,13 +73,16 @@ def save_final_median(path_to_saves,):
     median = sorted_min_entropy_preds[(sorted_min_entropy_preds.shape[0]-1)//2]
     selected_trial = np.where(all_min_entropy_preds == median)[0].item()
 
+    selected_trial_path = os.path.join(path_to_saves,"trial_"+str(selected_trial)+"/")
+
     #load in the weights and pick out the corresponding weight
-    data = np.load(path_to_saves+"/data_"+str(selected_trial)+".npz")
-    weights = np.load(path_to_saves+"/weight_history_"+str(selected_trial)+".npz")
+    data = np.load(selected_trial_path+"/data_"+str(selected_trial)+".npz")
+    weights = np.load(selected_trial_path+"/weights_"+str(selected_trial)+".npz")
     datum = data['x']
     labels = data['y']
     weights = weights['w']
     pws = ((weights @ labels).T.flatten())
+
     #print(datum.shape, labels.shape)
     closest_time_step = np.where(np.isclose(pws,median))[0].item()
     selected_weights = weights[closest_time_step,:]

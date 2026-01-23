@@ -1,10 +1,10 @@
-#global imports
 import torch
 import torch.nn as nn
 from torch.nn.utils import spectral_norm
-
-#local imports
-from main.util import warmup_spectral_norm
+import sys, os
+from ComplexNet import *
+sys.path.append(os.path.dirname(__file__))
+from util import warmup_spectral_norm, create_embedding_layers, embed_data
 
 class DataDiscriminator(torch.nn.Module):
     def __init__(self,
@@ -104,6 +104,7 @@ class DeepSetCritic(nn.Module):
                  hidden_dim=1024,):
         super().__init__()
         self.embedding_dict = embedding_dict
+        self.embedding_layers = create_embedding_layers(self.embedding_dict,torch.device('cuda:0'))
         
         self.rngs = rngs
 
@@ -194,3 +195,86 @@ class DeepSetCritic(nn.Module):
     def set_train(self):
         self.phi.train()
         self.rho.train()
+
+class DeepSetCriticComplex(DeepSetCritic):
+    def __init__(self,
+             rngs,
+            num_features,
+            dropout,
+            layers,
+            embedding_dict,
+            hidden_dim=1024,):
+        super().__init__(
+                rngs,
+                num_features,
+                dropout,
+                layers,
+                embedding_dict,
+                hidden_dim=hidden_dim,
+            )
+
+        self.embedding_dict = embedding_dict
+        self.embedding_layers = create_embedding_layers(self.embedding_dict, torch.device("cuda:0"))
+
+        self.rngs = rngs
+
+        # LayerNorm applied to the pooled set representation (phi -> rho interface)
+        self.hidden_ln = nn.LayerNorm(hidden_dim)
+
+        def add_block(seq, in_dim, out_dim, add_norm_act_dropout: bool):
+            """
+            Appends a ComplexLayer(in_dim->out_dim) and optionally LN + LeakyReLU + Dropout.
+            For the final layer, set add_norm_act_dropout=False.
+            """
+            seq.append(ComplexLayer(in_dim, out_dim))
+            if add_norm_act_dropout:
+                seq.append(nn.LayerNorm(out_dim))
+                seq.append(nn.LeakyReLU(0.2))
+                seq.append(nn.Dropout(dropout))
+            else:
+                seq.append(nn.Identity())
+
+        # Decide the hidden widths for intermediate layers
+        # Example: if layers=[256,128], then phi: num_features->256->128->hidden_dim
+        widths = list(layers) if len(layers) > 0 else []
+
+        # ---- Build PHI ----
+        phi_layers = []
+        if len(widths) == 0:
+            # minimal phi: num_features -> hidden_dim
+            add_block(phi_layers, num_features, hidden_dim, add_norm_act_dropout=False)
+        else:
+            # first: num_features -> widths[0] (with LN/act/dropout)
+            add_block(phi_layers, num_features, widths[0], add_norm_act_dropout=True)
+            # middle: widths[i] -> widths[i+1]
+            for in_d, out_d in zip(widths[:-1], widths[1:]):
+                add_block(phi_layers, in_d, out_d, add_norm_act_dropout=True)
+            # final: widths[-1] -> hidden_dim (no LN/act/dropout, but Identity to keep pattern)
+            add_block(phi_layers, widths[-1], hidden_dim, add_norm_act_dropout=False)
+
+        self.phi = nn.Sequential(*phi_layers)
+
+        # ---- Build RHO ----
+        rho_layers = []
+        if len(widths) == 0:
+            # minimal rho: hidden_dim -> 1
+            add_block(rho_layers, hidden_dim, 1, add_norm_act_dropout=False)
+        else:
+            # first: hidden_dim -> widths[0] (with LN/act/dropout)
+            add_block(rho_layers, hidden_dim, widths[0], add_norm_act_dropout=True)
+            # middle: widths[i] -> widths[i+1]
+            for in_d, out_d in zip(widths[:-1], widths[1:]):
+                add_block(rho_layers, in_d, out_d, add_norm_act_dropout=True)
+            # final: widths[-1] -> 1 (no LN/act/dropout)
+            add_block(rho_layers, widths[-1], 1, add_norm_act_dropout=False)
+
+        self.rho = nn.Sequential(*rho_layers)
+
+    def forward(self, x):  # x: [N, 8]
+        #embed data
+        #x = embed_data(self.embedding_layers,self.embedding_dict,x)
+        # x: [batch_size, set_size, input_dim]
+        x = self.phi(x)         # [B, 32, H]
+        x = x.mean(dim=1)        # [B, H] — permutation-invariant pooling
+        out = self.rho(x)       # [B, 1]
+        return out
