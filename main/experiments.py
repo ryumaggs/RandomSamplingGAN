@@ -89,7 +89,7 @@ SAME_NETWORK_INIT = True
 
 #measures of consistency
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+#device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # For dataset
 zero_prob = 0
 
@@ -112,7 +112,8 @@ def train(census_dataset_path,
           survey_dataset_path,
           save_path,
           save_dict,
-          num_trials):
+          num_trials,
+          train_device):
     '''
     census_dataset_path- str, path to census data csv
     survey_dataset_path- str, path to survey data csv
@@ -131,7 +132,7 @@ def train(census_dataset_path,
             t_rng = []
             for seed in fixed_seed:
                 t_rng.append(set_seed(seed,
-                                        device,
+                                        train_device,
                                     data_init=[SAME_DATA_GT, SAME_DATA_BIAS],
                                     data_gen =SAME_DATA_SEEN,
                                     network_init=SAME_NETWORK_INIT,))
@@ -139,7 +140,7 @@ def train(census_dataset_path,
     else:
         for _ in range(num_trials):
             all_rngs.append(set_seed(fixed_seed,
-                                    device,
+                                    train_device,
                                 data_init=[SAME_DATA_GT, SAME_DATA_BIAS],
                                 data_gen =SAME_DATA_SEEN,
                                 network_init=SAME_NETWORK_INIT,))
@@ -179,11 +180,12 @@ def train(census_dataset_path,
                         bias_path = survey_dataset_path,
                         rngs=rngs,
                         label_information = {'RECVDVACC':0},
-                        device=device,
+                        device=train_device,
                         columns_to_keep = None,
                         gt_limit = GT_LIMIT,
                         bias_limit = BIAS_LIMIT, 
                         )
+        #devices have been checked. should work with device input
         
 
         gan = WGAN_GP(
@@ -209,6 +211,7 @@ def train(census_dataset_path,
             generator_dropout=hparams["generator_dropout"],
             discriminator_dropout=hparams["discriminator_dropout"],
             KLIEP_downsample=hparams['KLIEP_downsample'],
+            device=train_device,
             save_dict= save_dict,
             save_dir = trial_save_path,
         )
