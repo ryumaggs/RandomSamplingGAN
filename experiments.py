@@ -38,15 +38,18 @@ DEBUG_MODE = False
 
 BATCH_SIZE = 2
 SUBSET_SIZE = 32
-GENERATOR_TRAINING_FACTOR = 0
+GENERATOR_TRAINING_FACTOR = 1
 DISCRIMINATOR_TRAINING_FACTOR = 8
 GT_LIMIT = 50000
 BIAS_LIMIT = 2500 #10000
 SAVE_DICT = {}
-SAVE_DICT['SAVE_DATASET'] = False
-SAVE_DICT['SAVE_WEIGHTS'] = False
+SAVE_DICT['SAVE_DATASET'] = True
+SAVE_DICT['SAVE_WEIGHTS'] = True
 SAVE_DICT['SAVE_IG'] = False
 SAVE_DICT['SAVE_GENERATOR'] = False
+SAVE_DICT['SAVE_CRITIC'] = True
+SAVE_DICT['SAVE_EVERY'] = 4
+
 
 KLIEP_DOWNSAMPLE = BIAS_LIMIT
 LAMBDAGP = 10 #hold this at 10. higher = less discriminator expressability
@@ -54,13 +57,13 @@ LAMBDAW = 0.006 #.00075 for 10k
 LAMBDAD = 13.5 #13.5
 LAMBDA_FIRST_LAYER = 0
 GENERATOR_LEARNING_RATE = 1e-5 #2e-3 or 1e-5
-DISCRIMINATOR_LEARNING_RATE = 1e-3 #1e-3 or 5e-5
+DISCRIMINATOR_LEARNING_RATE = 5e-5 #1e-3 or 5e-5
 BATCHS_IN_EPOCH = 1
-EPOCHS = 500
-NUM_TRIALS = 1
+EPOCHS = 5
+NUM_TRIALS = 10
 GEN_HISTORY_LENGTH = 0
 WARMUP_EPOCHS = 0
-GEN_LAYERS = [256] #[1024, 1024, 1024] #[256 for _ in range(5)]
+GEN_LAYERS = [1024, 1024, 1024] #[256 for _ in range(5)]
 DISC_LAYERS = [256, 256]
 GEN_DROPOUT = 0.2
 DISC_DROPOUT = 0.2
@@ -148,14 +151,14 @@ if __name__ == "__main__":
         #make a new runs folder
         week = str(w)
         exp_vars = {}
-        exp_vars['disc_layers'] = [[256],[256,256,256],[512],[512,512,512],[1024],[1024,1024,1024]]#[[256], [256, 256], [256, 256, 256], [512], [512,512], [512,512,512],[1024], [1024,1024], [1024,1024,1024]]
+        #exp_vars['disc_layers'] = [[256], [256, 256], [256, 256, 256], [512], [512,512], [512,512,512],[1024], [1024,1024], [1024,1024,1024]]
         #exp_vars['gen_layers'] = [[1024]]
         #exp_vars['gen_layers'] = [[256]]
         #exp_vars['learning_rates'] = [5e-5, 1e-5, 5e-6, 1e-6]
         #exp_vars['warmup_duration'] = [1000, 2000, 3000, 4000]
         #exp_vars['discriminator_dropout'] = [0.1, 0.2, 0.3]
         #exp_vars['dtrainingfactor'] = [8]
-        #exp_vars['gtrainingfactor'] = [1]
+        exp_vars['gtrainingfactor'] = [1]
         #exp_vars['warmup_epochs'] = [0]
         #exp_vars['lambdagp'] = [10]
         #exp_vars['dlearningrate'] = [5e-6]
@@ -174,6 +177,15 @@ if __name__ == "__main__":
         #exp_vars['epochs'] = [1000]
         old_g = None
 
+        main_dir = ""
+        if any(SAVE_DICT.values()):
+            main_dir = "./saves_week"+str(w)
+            if not os.path.exists(main_dir):
+                os.makedirs(main_dir)
+                print(f"Directory '{main_dir}' created.")
+            else:
+                print(f"Directory '{main_dir}' already exists.")
+
         if 'columns_to_keep' in exp_vars and len(exp_vars['columns_to_keep']) == 0:
             # Generate power set up to size 2
             power_set = []
@@ -184,8 +196,17 @@ if __name__ == "__main__":
         for exp_var,val in exp_vars.items():
             for tid in range(NUM_TRIALS):
                 rngs = all_rngs[tid]
+
+                trial_dir = ""
+                if any(SAVE_DICT.values()):
+                    trial_dir = os.path.join(main_dir,"trial:"+str(tid))
+                    if not os.path.exists(trial_dir):
+                        os.makedirs(trial_dir)
+                        print(f"Directory '{trial_dir}' created.")
+                    else:
+                        print(f"Directory '{trial_dir}' already exists.")
+
                 for cvar in val:
-                    print(cvar)
                     hparams = {
                         "glearningrate": GENERATOR_LEARNING_RATE,
                         "dlearningrate": DISCRIMINATOR_LEARNING_RATE,
@@ -268,17 +289,11 @@ if __name__ == "__main__":
                         print("\nKeyboard interrupt received. Exiting gracefully.")
                     '''
                     #week='ALL'
-                    directory = ""
-                    if any(SAVE_DICT.values()):
-                        directory = "./saves_week"+str(week)
-                        if not os.path.exists(directory):
-                            os.makedirs(directory)
-                            print(f"Directory '{directory}' created.")
-                        else:
-                            print(f"Directory '{directory}' already exists.")
                     
-                    d = HouseholdPulse_dataset(ground_truth_path='./data/HouseholdPulse_data/cleaned/ipums_cleaned_combined.csv',
-                                    bias_path = './data/HouseholdPulse_data/cleaned/pulse_week'+week+'_cleaned.csv',
+                    
+
+                    d = HouseholdPulse_dataset(ground_truth_path='./data/censusHouseholdPulse_data/cleaned/ipums_cleaned_combined.csv',
+                                    bias_path = './data/censusHouseholdPulse_data/cleaned/pulse_week'+week+'_cleaned.csv',
                                     rngs=rngs,
                                     label_information={'RECVDVACC':0}, #{'VAC':0, 'HLTHINS1':1, 'RECVDVACC},
                                     device=device,
@@ -293,7 +308,7 @@ if __name__ == "__main__":
                                 rngs=rngs,
                                 dataset=d,
                                 generator_type='deepSet',
-                                discriminator_type='deepSetComplex',
+                                discriminator_type='deepSet',
                                 gen_learning_rate=hparams["glearningrate"],
                                 disc_learning_rate=hparams["dlearningrate"],
                                 batch_size=hparams["batch_size"],
@@ -313,7 +328,7 @@ if __name__ == "__main__":
                                 discriminator_dropout=hparams["discriminator_dropout"],
                                 KLIEP_downsample=hparams['KLIEP_downsample'],
                                 save_dict=SAVE_DICT,
-                                save_dir = directory,
+                                save_dir = trial_dir,
                             )
 
                     synthetic = (weeks[0] == 'SYN')
