@@ -59,30 +59,6 @@ def compute_equispaced_inputs_IG(baseline_input,actual_input,num_steps,unsqueeze
             all_inputs.append(interp)
     return all_inputs
 
-def compute_IG_jacobian(all_inputs,gan,network='generator'):
-    '''
-    computes full jacobian with respect to input
-    '''
-    all_grads = []
-    for ai in all_inputs:
-        X_for_grad = ai.detach().clone().requires_grad_(True)
-        # Forward pass through G then D
-        sds, selected_indices, weights = gan.generator(X_for_grad)
-        #score = gan.discriminator(sds).sum()  # scalar score
-
-        # Compute gradient of score w.r.t. generator input
-        jac = []
-        for i in range(weights.numel()):
-            grad_input = torch.autograd.grad(
-                outputs=weights.view(-1)[i],
-                inputs=X_for_grad,
-                retain_graph=True,
-                create_graph=False
-            )[0].detach()  # shape: (2500, 7)
-            jac.append(torch.sqrt(grad_input**2).sum().cpu().item())
-        all_grads.append(np.mean(jac))
-    return np.mean(all_grads)
-
 def compute_IG_weights(all_inputs,
                        baseline_input,
                        actual_input,
@@ -112,8 +88,6 @@ def compute_IG_weights(all_inputs,
 
     '''
     printt = False
-    #tD = {}
-    #tD[3] = 0
     tD = None
     indexes = randomly_select_valid_points(X=unscaled_dataset,D=tD,K=1)
     all_grads = [[] for _ in range(len(indexes))]
@@ -144,7 +118,31 @@ def compute_IG_weights(all_inputs,
         integrated_grads[i] = integrated_grads[i][indexes[i],:]
 
     return integrated_grads
-    
+
+def compute_IG_jacobian(all_inputs,gan,network='generator'):
+    '''
+    computes full jacobian with respect to input
+    '''
+    all_grads = []
+    for ai in all_inputs:
+        X_for_grad = ai.detach().clone().requires_grad_(True)
+        # Forward pass through G then D
+        sds, selected_indices, weights = gan.generator(X_for_grad)
+        #score = gan.discriminator(sds).sum()  # scalar score
+
+        # Compute gradient of score w.r.t. generator input
+        jac = []
+        for i in range(weights.numel()):
+            grad_input = torch.autograd.grad(
+                outputs=weights.view(-1)[i],
+                inputs=X_for_grad,
+                retain_graph=True,
+                create_graph=False
+            )[0].detach()  # shape: (2500, 7)
+            jac.append(torch.sqrt(grad_input**2).sum().cpu().item())
+        all_grads.append(np.mean(jac))
+    return np.mean(all_grads)
+
 def compute_IG_score(all_inputs,baseline_input,actual_input,gan,network='generator'):
     '''
     all_inputs - list[torch.tensor] - returned by "compute equispaced_inputs_IG"
