@@ -12,3 +12,4 @@ saves*/
 *.pth
 *.pikl
 SVM*/
+train_log*

@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 import random
-from Generator import onesGen, dataGen, weightsGen, DeepSetNet, DeepSetComplexNet
-from Discriminator import Discriminator, DeepSetCritic, DeepSetCriticComplex
+from Generator import onesGen, dataGen, weightsGen, DeepSetNet
+from Discriminator import Discriminator, DeepSetCritic
 import sys, os
 sys.path.append(os.path.dirname(__file__))
 from util import dict2vector, get_avg_grad_per_layer, compute_data_shape, embed_data
@@ -790,9 +790,6 @@ class WGAN_GP(GAN):
                         y=self.biased_labels)
             np.savez("./"+self.save_dir+"/one_hot_data_"+str(trial_id)+".npz", x=self.bias_dataset.cpu().numpy(), 
                         y=self.biased_labels)
-        
-        
-
             
         return weights, self.biased_labels, prob_diffs, test_probs, test_prob_diffs, generator_losses, discriminator_losses
 

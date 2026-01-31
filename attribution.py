@@ -118,12 +118,6 @@ def compute_IG_weights(all_inputs,
     indexes = randomly_select_valid_points(X=unscaled_dataset,D=tD,K=1)
     all_grads = [[] for _ in range(len(indexes))]
     integrated_grads = [None for _ in range(len(indexes))]
-    if printt:
-        print(indexes)
-        print(baseline_input)
-        print(actual_input.shape,baseline_input.shape)
-        print(actual_input[0,:])
-        print((actual_input-baseline_input)[0,:])
     gan.generator.eval()
     saved_vals = []
     for ai in tqdm(all_inputs):
@@ -141,9 +135,6 @@ def compute_IG_weights(all_inputs,
                 create_graph=False,
             )[0].detach()  # shape: (2500, 7)
             all_grads[i].append(grad_input.cpu().numpy())
-    if printt:
-        print("difference: ", saved_vals[-1] - saved_vals[0])
-        print(saved_vals)
     for i in range(len(indexes)):
         all_grads[i] = np.concatenate(all_grads[i],axis=0) 
         
@@ -151,14 +142,7 @@ def compute_IG_weights(all_inputs,
         integrated_grads[i] = (actual_input-baseline_input).cpu().numpy() * all_grads[i] #scales by diff(actual,baseline)
 
         integrated_grads[i] = integrated_grads[i][indexes[i],:]
-        if printt:
-            print(all_grads[i].shape)
-            print("JJK: ", actual_input.shape, baseline_input.shape)
-            print("J: ", integrated_grads[i].shape)
-            print("new diff: ", np.sum(integrated_grads[i]))
-            print("J: ", integrated_grads[i].shape)
-            exit(1)
-    
+
     return integrated_grads
     
 def compute_IG_score(all_inputs,baseline_input,actual_input,gan,network='generator'):
