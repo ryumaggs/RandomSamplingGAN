@@ -51,7 +51,6 @@ to all rngs NUM_TRIALS times.
 if __name__ == "__main__":
     with open("config.yaml", "r") as f:
         config = yaml.safe_load(f)
-
     #setup randomness
     fixed_seed = np.random.randint(1e6)
     all_rngs = []

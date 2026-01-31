@@ -1,0 +1,9 @@
+torch==2.2.0
+tqdm
+pyyaml
+tensorboard==2.20.0
+scipy==1.6.2
+numpy==1.20.1
+pandas==1.2.4
+pytorch-warmup
+
