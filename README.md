@@ -21,7 +21,7 @@ The important variables to note are:
  IMPORTANT: certain aspects of attribution.py are NOT controlled inside the config.yaml file. 
  To change these aspects, you need to edit/play with attribution.py directly.
 
-the most crucial line for attribution is line 92: ```indexes = randomly_select_valid_points(X=unscaled_dataset,D=tD,K=1)```
+the most crucial line for attribution is line 92 of attribution.py: ```indexes = randomly_select_valid_points(X=unscaled_dataset,D=tD,K=1)```
 
 This line controls how many points are selected for attribution, and any conditions on the point:
 - K : int. How many random points to select that fit the criterea of D
