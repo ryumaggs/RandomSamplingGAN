@@ -1,16 +1,19 @@
 import pickle
 import numpy as np
 import torch
+import pandas as pd
 
 from Discriminator import *
 from util import set_seed
-from typing import Dict, Hashable, Tuple, Optional
+from typing import Dict, Hashable, Tuple, Optional, Any
 from tqdm import tqdm
 
 def pairwise_weighted_minibatch_scores(
     A: Dict[int, np.ndarray],
     B: Dict[int, nn.Module],
     X: np.ndarray,
+    gt_dataset: np.ndarray,
+    embedding_dict: Dict, 
     K: int,
     minibatch_size: int = 32,
     *,
@@ -83,6 +86,7 @@ def pairwise_weighted_minibatch_scores(
 
     scores = np.empty((len(a_keys), len(b_keys)), dtype=np.float64)
 
+    #iterate over all weight strategies
     for i, ak in tqdm(enumerate(a_keys)):
         w = np.asarray(A[ak], dtype=np.float64).reshape(-1)
         if w.shape[0] != M:
@@ -141,8 +145,185 @@ def pairwise_weighted_minibatch_scores(
 
             scores[i, j] = score
 
+    for j, bk in enumerate(b_keys):
+        net = B[bk]
+        index = np.random.choice(np.arange(len(gt_dataset)),size=minibatch_size*K,
+                                       replace=False)
+        sampled_data = torch.tensor(gt_dataset[index])
+        sampled_data = embed_data(None,embedding_dict,sampled_data,overrite_start_idx=0)
+        sampled_data = torch.reshape(sampled_data, (K, minibatch_size, X.shape[1])).to(device).float()
+        with torch.no_grad():
+            out = net(sampled_data)
+
+            if not torch.is_tensor(out):
+                raise TypeError(
+                    f"Network B[{bk}] returned type {type(out)}, expected a torch.Tensor."
+                )
+
+            # Reduce to scalar: mean over all elements (covers (K, ...), any shape)
+            score = out.float().mean().item()
+            scores[:,j] -= score
+    scores *= -1 #want to compute E[Truth score] - E[Fake Score] but rn its hte other way around
     return scores, a_keys, b_keys
 
+def rescale_01(M):
+    M = np.asarray(M, dtype=float)
+    m_min = M.min()
+    m_max = M.max()
+
+    if m_max == m_min:
+        return np.zeros_like(M)
+
+    return (M - m_min) / (m_max - m_min)
+
+
+def exp3_ix_selfplay_2p0s(
+    L: np.ndarray,
+    T: int = 50_000,
+    *,
+    eta1: Optional[float] = None,
+    gamma1: Optional[float] = None,
+    eta2: Optional[float] = None,
+    gamma2: Optional[float] = None,
+    seed: Optional[int] = None,
+    return_history: bool = False,
+) -> Dict[str, Any]:
+    """
+    Simultaneous no-regret learning for both players in a 2-player zero-sum matrix game
+    using EXP3-IX (bandit feedback).
+
+    Inputs
+    ------
+    L : (n1, n2) ndarray
+        Loss matrix for Player 1. Must have entries in [0, 1].
+        Player 2's loss is defined as: L2 = 1 - L (per your spec).
+    T : int
+        Number of rounds.
+
+    EXP3-IX (losses)
+    ---------------
+    - Maintain weights w over actions.
+    - Play action a ~ p where p = w / sum(w).
+    - Observe loss l(a) (bandit feedback).
+    - Form implicit-exploration estimator:
+          \hat{l}_a = l(a) / (p_a + gamma)
+          \hat{l}_i = 0 for i != a
+    - Update:
+          w_a <- w_a * exp(-eta * \hat{l}_a)
+
+    Returns
+    -------
+    dict with:
+      - "p1_avg": average action distribution over time for player 1 (n1,)
+      - "p2_avg": average action distribution over time for player 2 (n2,)
+      - "p1_last": final round's distribution for player 1
+      - "p2_last": final round's distribution for player 2
+      - (optional) "history": per-round sampled actions & losses
+    """
+    L = np.asarray(L, dtype=float)
+    if L.ndim != 2:
+        raise ValueError(f"L must be 2D (n1, n2). Got shape {L.shape}")
+    if np.any(L < 0.0) or np.any(L > 1.0):
+        raise ValueError("All entries of L must be in [0, 1].")
+
+    n1, n2 = L.shape
+    if T <= 0:
+        raise ValueError("T must be > 0.")
+
+    rng = np.random.default_rng(seed)
+
+    # Reasonable defaults (tunable). Keep them small to avoid numerical issues.
+    if eta1 is None:
+        eta1 = np.sqrt(2.0 * np.log(max(n1, 2)) / (T * max(n1, 1)))
+    if gamma1 is None:
+        gamma1 = 0.5 * eta1
+
+    if eta2 is None:
+        eta2 = np.sqrt(2.0 * np.log(max(n2, 2)) / (T * max(n2, 1)))
+    if gamma2 is None:
+        gamma2 = 0.5 * eta2
+
+    # Weights
+    w1 = np.ones(n1, dtype=float)
+    w2 = np.ones(n2, dtype=float)
+
+    # Running average of distributions (time-average mixed strategy)
+    p1_sum = np.zeros(n1, dtype=float)
+    p2_sum = np.zeros(n2, dtype=float)
+
+    # Optional history
+    if return_history:
+        a1_hist = np.empty(T, dtype=int)
+        a2_hist = np.empty(T, dtype=int)
+        l1_hist = np.empty(T, dtype=float)
+        l2_hist = np.empty(T, dtype=float)
+
+    def safe_probs(w: np.ndarray) -> np.ndarray:
+        w = np.maximum(w, 1e-300)  # prevent zeros
+        s = w.sum()
+        if not np.isfinite(s) or s <= 0:
+            # fallback: uniform
+            return np.full_like(w, 1.0 / w.size, dtype=float)
+        return w / s
+
+    for t in tqdm(range(T)):
+        # Current mixed strategies
+        p1 = safe_probs(w1)
+        p2 = safe_probs(w2)
+
+        # Accumulate for average strategy
+        p1_sum += p1
+        p2_sum += p2
+
+        # Sample actions
+        a1 = rng.choice(n1, p=p1)
+        a2 = rng.choice(n2, p=p2)
+
+        # Realized losses (bandit feedback)
+        l1 = L[a1, a2]
+        l2 = 1.0 - l1  # per your spec for 2p0s
+
+        # EXP3-IX implicit exploration estimators
+        # (only the played action gets a nonzero estimate)
+        est1 = l1 / (p1[a1] + gamma1)
+        est2 = l2 / (p2[a2] + gamma2)
+
+        # Weight updates (loss setting => negative exponent)
+        w1[a1] *= np.exp(-eta1 * est1)
+        w2[a2] *= np.exp(-eta2 * est2)
+
+        if return_history:
+            a1_hist[t] = a1
+            a2_hist[t] = a2
+            l1_hist[t] = l1
+            l2_hist[t] = l2
+
+    p1_last = safe_probs(w1)
+    p2_last = safe_probs(w2)
+
+    out: Dict[str, Any] = {
+        "p1_avg": p1_sum / T,
+        "p2_avg": p2_sum / T,
+        "p1_last": p1_last,
+        "p2_last": p2_last,
+        "params": {
+            "T": T,
+            "eta1": float(eta1),
+            "gamma1": float(gamma1),
+            "eta2": float(eta2),
+            "gamma2": float(gamma2),
+        },
+    }
+
+    if return_history:
+        out["history"] = {
+            "a1": a1_hist,
+            "a2": a2_hist,
+            "l1": l1_hist,
+            "l2": l2_hist,
+        }
+
+    return out
 
 
 SAME_DATA_GT = False
@@ -152,66 +333,82 @@ SAME_NETWORK_INIT = False
 # Create a simple model for demonstration
 device = torch.device('cuda:0')
 #load generator, load dataset, load weights
-main_folder = "./saves_week29/"
-files = os.listdir(main_folder)
-saved_every = 30
+save_folder = "./saves_week29/"
+folders = os.listdir(save_folder)
+saved_every = 20
 
-embed_name = "embedding_dict_0_.pikl"
-data_name = "data_0.npz"
-one_hot_data_name = "one_hot_data_0.npz"
-all_weights = {}
-all_critics = {}
+gt_data = (pd.read_csv('./data/censusHouseholdPulse_data/cleaned/ipums_cleaned_combined.csv').to_numpy(dtype=float, na_value=0))[:,1:]
 
-data = np.load(os.path.join(main_folder,data_name))
-one_hot_data = np.load(os.path.join(main_folder, one_hot_data_name))
-x = one_hot_data['x']
-y = one_hot_data['y']
+for f in folders:
+    main_folder = os.path.join(save_folder,f)
+    trial_id = int(f.split(":")[1])
+
+    embed_name = "embedding_dict_"+str(trial_id)+"_.pikl"
+    with open(os.path.join(main_folder,embed_name), 'rb') as file:
+        embed_dict = pickle.load(file)
+
+    data_name = "data_"+str(trial_id)+".npz"
+    one_hot_data_name = "one_hot_data_"+str(trial_id)+".npz"
+    all_weights = {}
+    all_critics = {}
+
+    data = np.load(os.path.join(main_folder,data_name))
+    one_hot_data = np.load(os.path.join(main_folder, one_hot_data_name))
+    x = one_hot_data['x']
+    y = one_hot_data['y']
+
+    for i in range(0,600,saved_every):
+        critic_checkpoint = torch.load(os.path.join(main_folder,"critic_checkpoint_"+str(i)+".pt"), map_location="cpu")
+        config = critic_checkpoint["config"]
+        weights_name = "weights_"+str(i)+".npz"
+        all_rngs = []
+        fixed_seed = np.random.randint(1e6)
+        for _ in range(1):
+            all_rngs.append(set_seed(fixed_seed,
+                                    device,
+                                data_init=[SAME_DATA_GT, SAME_DATA_BIAS],
+                                data_gen =SAME_DATA_SEEN,
+                                network_init=SAME_NETWORK_INIT,))
+        '''
+        rngs,
+        num_features,
+        dropout,
+        layers,
+        embedding_dict,
+        hidden_dim=1024,):
+        '''
+        critic = DeepSetCritic(rngs=all_rngs[0],
+                                    num_features = config["num_features"],
+                                    dropout = config["dropout"],
+                                    layers = config["layers"],
+                                    embedding_dict=config['embedding_dict']).to(device)
+        missing, unexpected = critic.load_state_dict(critic_checkpoint["state_dict"], strict=False)
+
+        gen_weights = np.load(os.path.join(main_folder,weights_name))['w'].flatten()
+        
+        all_critics[i] = critic
+        all_weights[i] = gen_weights
 
 
-
-for i in range(0,500,saved_every):
-    critic_checkpoint = torch.load(os.path.join(main_folder,"critic_checkpoint_"+str(i)+".pt"), map_location="cpu")
-    config = critic_checkpoint["config"]
-    weights_name = "weights_"+str(i)+".npz"
-    all_rngs = []
-    fixed_seed = np.random.randint(1e6)
-    for _ in range(1):
-        all_rngs.append(set_seed(fixed_seed,
-                                device,
-                            data_init=[SAME_DATA_GT, SAME_DATA_BIAS],
-                            data_gen =SAME_DATA_SEEN,
-                            network_init=SAME_NETWORK_INIT,))
-    '''
-    rngs,
-    num_features,
-    dropout,
-    layers,
-    embedding_dict,
-    hidden_dim=1024,):
-    '''
-    critic = DeepSetCritic(rngs=all_rngs[0],
-                                num_features = config["num_features"],
-                                dropout = config["dropout"],
-                                layers = config["layers"],
-                                embedding_dict=config['embedding_dict']).to(device)
-    missing, unexpected = critic.load_state_dict(critic_checkpoint["state_dict"], strict=False)
-
-    gen_weights = np.load(os.path.join(main_folder,weights_name))['w'].flatten()
+    out = pairwise_weighted_minibatch_scores(
+        A= all_weights,
+        B= all_critics,
+        X= x.squeeze(),
+        gt_dataset=gt_data,
+        embedding_dict=embed_dict,
+        K= 10,
+        minibatch_size=32,
+        device=torch.device('cuda:0'),
+        seed = 0,
+        use_eval = True,)
     
-    all_critics[i] = critic
-    all_weights[i] = gen_weights
+    conf_matrix = out[0][10:,1:]
+    conf_matrix = rescale_01(conf_matrix)
+    print(conf_matrix[0,:])
+    
+
+    out = exp3_ix_selfplay_2p0s(L=conf_matrix)
+    print(out)
     break
 
-
-out = pairwise_weighted_minibatch_scores(
-    A= all_weights,
-    B= all_critics,
-    X= x.squeeze(),
-    K= 10,
-    minibatch_size=32,
-    device=torch.device('cuda:0'),
-    seed = 0,
-    use_eval = True,)
-
-print(out[0])
 #print(out[0])

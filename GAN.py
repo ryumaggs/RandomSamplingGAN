@@ -169,7 +169,7 @@ class GAN():
         baseline_input=torch.mean(self.ground_truth_dataset,dim=0).to(self.device)
         all_inputs = compute_equispaced_inputs_IG(baseline_input=baseline_input,
                                         actual_input=self.bias_dataset.squeeze(0),
-                                        num_steps=2,
+                                        num_steps=32,
                                         unsqueeze=True)
         mean_grad = compute_IG_weights(all_inputs=all_inputs,
                                          baseline_input=baseline_input,
@@ -599,6 +599,33 @@ class GAN():
         weights = self.generator.get_weights(self.bias_dataset)
         return weights, self.biased_labels, prob_diffs, test_probs, test_prob_diffs, generator_losses, discriminator_losses
 
+    def save(self, epoch):
+        if self.save_dict['SAVE_CRITIC']:
+            torch.save(
+                {
+                    "config": self.critic_config,
+                    "state_dict": {k: v.cpu() for k, v in self.discriminator.state_dict().items()}
+                },
+                "./"+self.save_dir+"/critic_checkpoint_"+str(epoch)+".pt"
+            )
+
+        if self.save_dict['SAVE_GENERATOR']: 
+            torch.save(
+                {
+                    "config": self.generator_config,
+                    "state_dict": {k: v.cpu() for k, v in self.generator.state_dict().items()}
+                },
+                "./"+self.save_dir+"/generator_checkpoint_"+str(epoch)+".pt"
+            )
+    
+        if self.save_dict['SAVE_WEIGHTS']:
+            weights = self.generator.get_weights(self.bias_dataset)
+            #self.compute_input_gradient_generator()
+            #np.savez("./"+self.save_dir+"/grad_history_"+str(trial_id)+"_"+str(synthetic_col_names)+".npz", 
+            #        w=np.array(self.input_grad_history), wc=np.array(self.critic_input_grad_history))
+            np.savez("./"+self.save_dir+"/weights_"+str(epoch)+".npz", 
+                    w=np.array(weights))
+                    
 class WGAN_GP(GAN):
 
     def notebook_train(self,
@@ -743,43 +770,27 @@ class WGAN_GP(GAN):
             #writer.add_scalar('Disc Learning rate', self.discriminator_optimizer.param_groups[0]['lr'],epoch)
             #writer.add_scalar('Unique Counts', sum(unique_counts)/len(unique_counts), epoch)
 
-            if epoch % self.save_dict['SAVE_EVERY'] == 0:
-                if self.save_dict['SAVE_CRITIC']:
-                    torch.save(
-                        {
-                            "config": self.critic_config,
-                            "state_dict": {k: v.cpu() for k, v in self.discriminator.state_dict().items()}
-                        },
-                        "./"+self.save_dir+"/critic_checkpoint_"+str(epoch)+".pt"
-                    )
+            if self.save_dict['SAVE_EVERY'] != -1 and epoch % self.save_dict['SAVE_EVERY'] == 0:
+                self.save(epoch=epoch)
 
-                if self.save_dict['SAVE_GENERATOR']: 
-                    torch.save(
-                        {
-                            "config": self.generator_config,
-                            "state_dict": {k: v.cpu() for k, v in self.generator.state_dict().items()}
-                        },
-                        "./"+self.save_dir+"/generator_checkpoint_"+str(epoch)+".pt"
-                    )
-            
-                if self.save_dict['SAVE_WEIGHTS']:
-                    weights = self.generator.get_weights(self.bias_dataset)
-                    #self.compute_input_gradient_generator()
-                    #np.savez("./"+self.save_dir+"/grad_history_"+str(trial_id)+"_"+str(synthetic_col_names)+".npz", 
-                    #        w=np.array(self.input_grad_history), wc=np.array(self.critic_input_grad_history))
-                    np.savez("./"+self.save_dir+"/weights_"+str(epoch)+".npz", 
-                            w=np.array(weights))
+        if any(self.save_dict.values()):
+            with open("./"+self.save_dir+"/embedding_dict_"+str(trial_id)+"_"+str(synthetic_col_names)+".pikl",'wb') as file:
+                pickle.dump(self.embedding_dict, file)
+
+        if self.save_dict['SAVE_EVERY'] == -1:
+            self.save(epoch=epochs)
                     
-            if any(self.save_dict.values()):
-                with open("./"+self.save_dir+"/embedding_dict_"+str(trial_id)+"_"+str(synthetic_col_names)+".pikl",'wb') as file:
-                    pickle.dump(self.embedding_dict, file)
+        if self.save_dict['SAVE_IG']:
+            self.compute_input_gradient_generator()
+            np.savez("./"+self.save_dir+"/grad_history_"+str(trial_id)+".npz", 
+            w=np.array(self.input_grad_history), wc=np.array(self.critic_input_grad_history))
 
-            if self.save_dict['SAVE_DATASET']:
-                np.savez("./"+self.save_dir+"/data_"+str(trial_id)+".npz", x=self.unscaled_biased.cpu().numpy(), 
-                            y=self.biased_labels)
-                np.savez("./"+self.save_dir+"/one_hot_data_"+str(trial_id)+".npz", x=self.bias_dataset.cpu().numpy(), 
-                            y=self.biased_labels)
-            
+        if self.save_dict['SAVE_DATASET']:
+            np.savez("./"+self.save_dir+"/data_"+str(trial_id)+".npz", x=self.unscaled_biased.cpu().numpy(), 
+                        y=self.biased_labels)
+            np.savez("./"+self.save_dir+"/one_hot_data_"+str(trial_id)+".npz", x=self.bias_dataset.cpu().numpy(), 
+                        y=self.biased_labels)
+        
         
 
             

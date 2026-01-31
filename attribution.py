@@ -50,7 +50,7 @@ def compute_equispaced_inputs_IG(baseline_input,actual_input,num_steps,unsqueeze
     alphas = torch.linspace(0, 1, steps=num_steps)  # 0 -> mu, 1 -> D
 
     # Create list of interpolated matrices
-    for alpha in alphas:
+    for i, alpha in enumerate(alphas):
         # Linear interpolation for all rows
         interp = baseline_input + alpha * diff
         if unsqueeze:
@@ -111,19 +111,27 @@ def compute_IG_weights(all_inputs,
 
 
     '''
+    printt = False
     #tD = {}
     #tD[3] = 0
     tD = None
-    indexes = randomly_select_valid_points(X=unscaled_dataset,D=tD,K=np.inf)
+    indexes = randomly_select_valid_points(X=unscaled_dataset,D=tD,K=1)
     all_grads = [[] for _ in range(len(indexes))]
     integrated_grads = [None for _ in range(len(indexes))]
+    if printt:
+        print(indexes)
+        print(baseline_input)
+        print(actual_input.shape,baseline_input.shape)
+        print(actual_input[0,:])
+        print((actual_input-baseline_input)[0,:])
+    gan.generator.eval()
+    saved_vals = []
     for ai in tqdm(all_inputs):
         X_for_grad = ai.detach().clone().requires_grad_(True)
-
         # Forward pass through G then D
         _, _, logits = gan.generator(X_for_grad)
         softmaxed_logits = torch.nn.functional.softmax(logits,dim=1)
-
+        saved_vals.append(softmaxed_logits[0,indexes[0]].detach().cpu().item())
         # Compute gradient of score w.r.t. generator input
         for i, ind in enumerate(indexes):
             grad_input = torch.autograd.grad(
@@ -133,12 +141,23 @@ def compute_IG_weights(all_inputs,
                 create_graph=False,
             )[0].detach()  # shape: (2500, 7)
             all_grads[i].append(grad_input.cpu().numpy())
-    
+    if printt:
+        print("difference: ", saved_vals[-1] - saved_vals[0])
+        print(saved_vals)
     for i in range(len(indexes)):
         all_grads[i] = np.concatenate(all_grads[i],axis=0) 
+        
         all_grads[i] = np.mean(all_grads[i],axis=0) ##aggregates over all_inputs
         integrated_grads[i] = (actual_input-baseline_input).cpu().numpy() * all_grads[i] #scales by diff(actual,baseline)
+
         integrated_grads[i] = integrated_grads[i][indexes[i],:]
+        if printt:
+            print(all_grads[i].shape)
+            print("JJK: ", actual_input.shape, baseline_input.shape)
+            print("J: ", integrated_grads[i].shape)
+            print("new diff: ", np.sum(integrated_grads[i]))
+            print("J: ", integrated_grads[i].shape)
+            exit(1)
     
     return integrated_grads
     
@@ -482,6 +501,138 @@ def compute_confusion_matrix_GEN(dataset,
         all_matrices_weighted.append(c_matrix_weighted)
     return all_matrices_uniform, all_matrices_weighted
 
+import torch
+from typing import Dict, List, Any, Tuple, Optional
+
+def isolate_changed_row_probs(
+    model,
+    X_onehot: torch.Tensor,                          # (N, D_total) one-hot encoded
+    encoding_dict: Dict[int, List[Any]],             # {var_id: [..., onehot_size]}
+    var_id: int,
+    var_value: int,
+    target_var_value: int,
+    batch_try: bool = True,
+    eps: float = 1e-12,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Finds all rows i where variable `var_id` equals `var_value` (based on argmax in that var's one-hot slice).
+    For each such row i:
+      - Create a modified dataset X_mod where ONLY row i has var_id changed to `target_var_value`
+      - Run model(X_mod) which outputs a probability distribution over rows (length N)
+      - Isolate and store the probability for the changed row i (i.e., output[i])
+
+    Returns:
+      matched_indices: LongTensor of shape (K,) with the row indices that were changed
+      changed_row_probs: Tensor of shape (K,) with the isolated probabilities model(X_mod)[i]
+
+    Notes:
+      - Assumes encoding_dict entries are in dataset variable order by var_id (sorted keys).
+      - Assumes the last element of encoding_dict[var_id] is the one-hot size for that variable.
+      - Tries to batch all K modified datasets as shape (K, N, D_total) if `batch_try=True`.
+        Falls back to a loop if the model doesn't support batched input.
+    """
+    device = X_onehot.device
+    _, N, D_total = X_onehot.shape
+
+    if var_id not in encoding_dict:
+        raise KeyError(f"var_id={var_id} not found in encoding_dict keys: {sorted(encoding_dict.keys())}")
+
+    # ---- build slices for each variable from encoding_dict (sorted by var_id) ----
+    # We only rely on the last int = onehot size
+    var_ids_sorted = sorted(encoding_dict.keys())
+
+    sizes = {}
+    for vid in var_ids_sorted:
+        vinfo = encoding_dict[vid]
+        if not isinstance(vinfo, (list, tuple)) or len(vinfo) == 0:
+            raise ValueError(f"encoding_dict[{vid}] must be a list/tuple with last element = onehot size.")
+        size = int(vinfo[-1])
+        if size <= 0:
+            raise ValueError(f"Invalid one-hot size for var {vid}: {size}")
+        sizes[vid] = size
+
+    # offsets
+    start = 0
+    slices = {}
+    for vid in var_ids_sorted:
+        end = start + sizes[vid]
+        slices[vid] = (start, end)
+        start = end
+
+    if start != D_total:
+        raise ValueError(
+            f"Sum of one-hot sizes from encoding_dict = {start}, but X_onehot has D_total={D_total}. "
+            f"Check encoding_dict order/sizes."
+        )
+
+    v_start, v_end = slices[var_id]
+    v_size = v_end - v_start
+
+    if not (0 <= var_value < v_size):
+        raise ValueError(f"var_value={var_value} out of range for var_id={var_id} with onehot size {v_size}")
+    if not (0 <= target_var_value < v_size):
+        raise ValueError(
+            f"target_var_value={target_var_value} out of range for var_id={var_id} with onehot size {v_size}"
+        )
+
+    # ---- find rows where var_id == var_value ----
+    # interpret one-hot value via argmax
+    current_vals = X_onehot[0,:, v_start:v_end].argmax(dim=1)  # (N,)
+    matched_mask = (current_vals == int(var_value))
+    matched_indices = matched_mask.nonzero(as_tuple=False).squeeze(1)  # (K,)
+
+    if matched_indices.numel() == 0:
+        # no rows match; return empty tensors
+        return matched_indices, torch.empty((0,), device=device, dtype=X_onehot.dtype)
+
+    K = matched_indices.numel()
+
+    # ---- helper to run model and normalize output if needed ----
+    def _model_probs(inp: torch.Tensor) -> torch.Tensor:
+        """
+        inp: (N, D) or (B, N, D)
+        returns probs: (N,) or (B, N)
+        """
+        _, _, out = model(inp)
+        
+        # (B, N)
+        probs = torch.nn.functional.softmax(out,dim=1)
+        return probs.squeeze()
+
+    # ---- create modified datasets and isolate probs at changed rows ----
+    # For each matched index i:
+    #   X_mod = X_onehot.clone(); change row i's var slice to target; run model; take prob[i]
+    changed_row_probs = torch.empty((K,), device=device, dtype=X_onehot.dtype)
+
+    if batch_try:
+        # Try batched: X_batch shape (K, N, D_total)
+        # Each batch element b modifies row idx = matched_indices[b]
+        X_batch = X_onehot.repeat(K, 1, 1).clone()  # (K, N, D)
+
+        rows = matched_indices  # (K,)
+        # zero the slice for the target var on those specific rows in each batch element
+        X_batch[torch.arange(K, device=device), rows, v_start:v_end] = 0
+        # set the target one-hot position to 1
+        X_batch[torch.arange(K, device=device), rows, v_start + int(target_var_value)] = 1
+
+        try:
+            probs_batch = _model_probs(X_batch)  # (K, N)
+            changed_row_probs = probs_batch[torch.arange(K, device=device), rows]
+            return matched_indices, changed_row_probs
+        except Exception:
+            # fall back to loop if model doesn't support batched inputs
+            pass
+
+    # Loop fallback (always works, but K forward passes)
+    for j, i in tqdm(enumerate(matched_indices.tolist())):
+        X_mod = X_onehot.clone()
+        X_mod[0,i, v_start:v_end] = 0
+        X_mod[0,i, v_start + int(target_var_value)] = 1
+        probs = _model_probs(X_mod.to(torch.device('cuda:0')))  # (N,)
+        changed_row_probs[j] = probs[i].cpu().item()
+
+    return matched_indices, changed_row_probs
+
 
 if __name__ == '__main__':
     #Logit difference Computation 
@@ -514,10 +665,10 @@ if __name__ == '__main__':
     SAME_NETWORK_INIT = False
     device = torch.device('cuda:0')
     #load generator, load dataset, load weights
-    folder = "./saves_week29/"
+    folder = "./saves_week29/trial:0/"
     data_name = "data_0.npz"
     one_hot_data_name = "one_hot_data_0.npz"
-    weights_name = "weights_0_.npz"
+    weights_name = "weights_200.npz"
     embed_name = "embedding_dict_0_.pikl"
 
 
@@ -530,7 +681,7 @@ if __name__ == '__main__':
         embed_dict = pickle.load(file)
     weights = np.load(folder+weights_name)['w'].flatten()
 
-    checkpoint = torch.load(folder + "/generator_checkpoint.pt", map_location="cpu")
+    checkpoint = torch.load(folder + "/generator_checkpoint_200.pt", map_location="cpu")
     config = checkpoint["config"]
     state_dict = checkpoint["state_dict"]
     fixed_seed = np.random.randint(1e6)
@@ -553,7 +704,11 @@ if __name__ == '__main__':
                             embedding_dict=config['embedding_dict']).to(device)
     missing, unexpected = generator.load_state_dict(checkpoint["state_dict"], strict=False)
     generator.set_eval()
+    with torch.no_grad():
+        _, _, baseline_logits = generator(one_hot_x.to(device))
+        baseline_probs = torch.nn.functional.softmax(baseline_logits,dim=1).squeeze().cpu()
 
+    '''
     cur_logits = generator.get_logits(one_hot_x.to(device))
 
     all_conf_matrices_uniform, all_conf_matrices_weighted = compute_confusion_matrix_GEN(x,
@@ -561,10 +716,17 @@ if __name__ == '__main__':
                                                 generator,
                                                 cur_logits,
                                                 embed_dict,
-                                                weights,)
-    
-    with open(folder+"/temp_conf_uniform_matrix.pikl", 'wb') as file:
-        pickle.dump(all_conf_matrices_uniform, file)
-    
-    with open(folder+"/temp_conf_weighted_matrix.pikl", 'wb') as file:
-        pickle.dump(all_conf_matrices_weighted, file)
+                                                weights,)'''
+    idxs, probs = isolate_changed_row_probs(   
+    model=generator,
+    X_onehot=one_hot_x,
+    encoding_dict=embed_dict,
+    var_id=3,
+    var_value=0,
+    target_var_value=1,
+    batch_try = False,
+    )
+    print(idxs.shape, probs.shape)
+    print(torch.mean(baseline_probs[idxs] - probs))
+    print(torch.mean(baseline_probs[idxs]))
+    print(torch.mean(baseline_probs[idxs] - probs)/torch.mean(baseline_probs))
