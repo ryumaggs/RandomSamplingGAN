@@ -193,15 +193,7 @@ class HouseholdPulse_dataset():
                             gt_limit,
                             rngs):
         if columns_to_keep is not None:
-            census_columns_to_keep = ['PERWT']
-            census_columns_to_keep.extend(list(columns_to_keep))
-            gtd = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rngs['seed_gt'])[census_columns_to_keep].to_numpy(dtype=np.float, na_value=0)
-            survey_columns_to_keep = ['HLTHINS1'] #HLTHINS1 or RECVDVACC
-            survey_columns_to_keep.extend(list(columns_to_keep))
-            if bias_limit >= raw_bias_load.shape[0]:
-                bd = raw_bias_load[survey_columns_to_keep].to_numpy(dtype=np.float, na_value=0)
-            else:
-                bd = raw_bias_load.sample(n=bias_limit,random_state=rngs['seed_bias'])[survey_columns_to_keep].to_numpy(dtype=np.float, na_value=0)
+            raise NotImplementedError
         else:
             gtd = None
             if gt_limit < raw_gt_load.shape[0]:
@@ -275,12 +267,32 @@ class HouseholdPulse_synthetic(HouseholdPulse_dataset):
                  ground_truth_path,
                  bias_path,
                  rngs,
+                 label_information,
                  device=None,
+                 columns_to_keep = None,
                  gt_limit=5000,
-                 bias_limit=1000, ):
+                 bias_limit=1000, 
+                 add_random_noise=False,
+                 max_num_ran_var=0,):
         '''
-        column_names - list[str] - len(2) - 2 valid column names in the ground_truth dataset 
+        Docstring for __init__
+        
+        :param self: Description
+        :param ground_truth_path: Str - path to census data
+        :param bias_path: Str, can be None, dummy holder
+        :param rngs: rngs object created in notebook
+        :param device: torch.cuda(device) object
+        :param columns_to_keep: leave as None, dummy argument
+        :param gt_limit: int - number of census points to use
+        :param bias_limit: int - number of bias points to use
+        :param add_random_noise: bool - should the code add random variables
+        :param max_num_ran_var: int - max number of random var, must be multiple of 2
         '''
+        self.label_indexes = list(label_information.values())
+        self.num_labels = len(label_information)
+
+        self.add_random_noise=add_random_noise
+        self.max_num_ran_var=max_num_ran_var
         self.num_labels = 0
         self.type = 'real'
         self.device = device
@@ -289,8 +301,6 @@ class HouseholdPulse_synthetic(HouseholdPulse_dataset):
         rng = rngs
         raw_gt_load = self.load_csv(ground_truth_path)
         self.ground_truth_dataset = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rng['seed_gt'])
-        #remove points already sampled
-        raw_gt_load = raw_gt_load.drop(self.ground_truth_dataset.index)
         
         #remove perwt column from both gt and raw
         self.ground_truth_dataset.drop(self.ground_truth_dataset.columns[0], axis=1, inplace=True)
@@ -306,14 +316,24 @@ class HouseholdPulse_synthetic(HouseholdPulse_dataset):
         self.joint_table = {}
 
         #pick two random variables
-        self.pick_perturb_two_vars()
-        self.pick_perturb_two_vars()
-        self.pick_perturb_two_vars()
+        for _ in range(max_num_ran_var//2):
+            self.pick_perturb_two_vars()
         w = self.reweight_to_joint_targets(raw_gt_load,
                                        targets=self.joint_table,)
+        
+        print(self.joint_table)
+        assert 1 == 0
         #sample with final w
         idx = np.random.choice(raw_gt_load.shape[0], size=2500, replace=False, p=w)
         sampled_df = raw_gt_load.iloc[idx]
+        '''
+        bl = bd[:,self.label_indexes]
+            for nl in range(self.num_labels):
+                print("uniform avg target: ", sum(bl[:,nl])/len(bl[:,nl]))
+            
+            print(gtd.shape, bd.shape, bl.shape)
+        return gtd[:,1:], gtd[:,0], bd[:,self.num_labels:], bl
+        '''
         #sample data set with distribution and convert to numpy array
         #new_joint_distr = self.resample_df_with_joint_distribution(self.column_names, self.ground_truth_dataset, joint_np, x_vals, y_vals, bias_limit)
         #experimental
@@ -322,7 +342,8 @@ class HouseholdPulse_synthetic(HouseholdPulse_dataset):
         self.ground_truth_dataset = self.ground_truth_dataset.to_numpy(dtype=np.float, na_value=0)
 
         self.var_setup()
-        self.add_random_noise()
+        if self.add_random_noise:
+            self.add_random_noise()
 
     def pick_perturb_two_vars(self):
         all_columns = list(self.ground_truth_dataset.columns)

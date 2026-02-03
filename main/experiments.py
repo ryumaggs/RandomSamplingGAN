@@ -252,3 +252,148 @@ def train(census_dataset_path,
         #with open('./results.pkl', 'wb') as file:
         #    pickle.dump(results,file)
         writer.close()
+
+def train_synthetic(census_dataset_path,
+          survey_dataset_path,
+          save_path,
+          save_dict,
+          num_trials,
+          train_device):
+    '''
+    census_dataset_path- str, path to census data csv
+    survey_dataset_path- str, dummy argument doesnt use
+    save_path - str- directory path to folder to save
+    '''
+    print("STARTING TRAINING OF", num_trials, " TOTAL RUNS")
+    #create save path if doesnt eixst
+    if not os.path.isdir(save_path):
+        os.mkdir(save_path)
+    
+    fixed_seed = [np.random.randint(0,1e6)]
+    all_rngs = []
+    print('SETTING SEED: ', fixed_seed)
+    if type(fixed_seed) == list:
+        for _ in range(num_trials):
+            t_rng = []
+            for seed in fixed_seed:
+                t_rng.append(set_seed(seed,
+                                        train_device,
+                                    data_init=[SAME_DATA_GT, SAME_DATA_BIAS],
+                                    data_gen =SAME_DATA_SEEN,
+                                    network_init=SAME_NETWORK_INIT,))
+            all_rngs.append(t_rng)
+    else:
+        for _ in range(num_trials):
+            all_rngs.append(set_seed(fixed_seed,
+                                    train_device,
+                                data_init=[SAME_DATA_GT, SAME_DATA_BIAS],
+                                data_gen =SAME_DATA_SEEN,
+                                network_init=SAME_NETWORK_INIT,))
+    for tid in range(num_trials):
+        trial_save_path = os.path.join(save_path,"trial_"+str(tid)+"/")
+        if not os.path.isdir(trial_save_path):
+            os.mkdir(trial_save_path)
+
+        print("-----------------------------------")
+        print("RUN:", tid+1, "/", num_trials)
+        print("")
+        rngs = all_rngs[tid][0]
+        hparams = {
+            "glearningrate": GENERATOR_LEARNING_RATE,
+            "dlearningrate": DISCRIMINATOR_LEARNING_RATE,
+            "gen_layers": GEN_LAYERS,
+            "disc_layers": DISC_LAYERS,
+            "wudur": warmup_durations[0],
+            "generator_dropout": GEN_DROPOUT,
+            "discriminator_dropout": DISC_DROPOUT,
+            "gtrainingfactor": GENERATOR_TRAINING_FACTOR,
+            "dtrainingfactor": DISCRIMINATOR_TRAINING_FACTOR,
+            "subset_size": SUBSET_SIZE,
+            "batch_size": BATCH_SIZE,
+            "lambdagp": LAMBDAGP,
+            "lambdaw": LAMBDAW,
+            "lambdad": LAMBDAD,
+            "tau": TEMPERATURE,
+            "gen_history_length": GEN_HISTORY_LENGTH,
+            "epochs": EPOCHS,
+            "warmup_epochs": WARMUP_EPOCHS,
+            "lambda_first_layer": LAMBDA_FIRST_LAYER,
+            "KLIEP_downsample": KLIEP_DOWNSAMPLE,
+        }
+        
+        d = HouseholdPulse_synthetic(ground_truth_path=census_dataset_path,
+                        bias_path = survey_dataset_path,
+                        rngs=rngs,
+                        label_information = {'RECVDVACC':0},
+                        device=train_device,
+                        columns_to_keep = None,
+                        gt_limit = GT_LIMIT,
+                        bias_limit = BIAS_LIMIT, 
+                        )
+        #devices have been checked. should work with device input
+        
+
+        gan = WGAN_GP(
+            rngs=rngs,
+            dataset=d,
+            generator_type='deepSet',
+            discriminator_type='deepSet',
+            gen_learning_rate=hparams["glearningrate"],
+            disc_learning_rate=hparams["dlearningrate"],
+            batch_size=hparams["batch_size"],
+            truth_sample_size=hparams["subset_size"],
+            gen_layers=hparams["gen_layers"],
+            disc_layers=hparams["disc_layers"],
+            bias_sample_size=hparams["subset_size"],
+            lambda_gp=hparams["lambdagp"],
+            lambda_weights=hparams["lambdaw"],
+            lambda_demo=hparams["lambdad"],
+            gen_history_length=hparams["gen_history_length"],
+            temperature=hparams["tau"],
+            warmup_length=hparams["wudur"],
+            lambda_regularizer=0,
+            lambda_first_layer=hparams["lambda_first_layer"],
+            generator_dropout=hparams["generator_dropout"],
+            discriminator_dropout=hparams["discriminator_dropout"],
+            KLIEP_downsample=hparams['KLIEP_downsample'],
+            device=train_device,
+            save_dict= save_dict,
+            save_dir = trial_save_path,
+        )
+
+        comment = "runs"
+        base_logdir = save_path
+
+        log_dir = os.path.join(
+            base_logdir,
+            comment,
+            datetime.now().strftime("%Y%m%d-%H%M%S")
+        )
+
+        writer = SummaryWriter(log_dir=log_dir)
+        
+        for key, item in hparams.items():
+            if isinstance(item, list):
+                hparams[key] = str(hparams[key])
+        
+        writer.add_hparams(hparams,{})
+
+
+        weights, bias_labels, prob_diffs,  test_probs, test_prob_diffs, generator_losses, discriminator_losses  = gan.train(BATCHS_IN_EPOCH,
+                                                                                                                                hparams['epochs'],
+                                                                                                                                hparams['warmup_epochs'],
+                                                                                                                                TEMPERATURE_START,
+                                                                                                                                TEMPERATURE_END,
+                                                                                                                                hparams['gtrainingfactor'],
+                                                                                                                                hparams['dtrainingfactor'],
+                                                                                                                                SAVE_EVERY,
+                                                                                                                                writer,
+                                                                                                                                tid,
+                                                                                                                                synthetic=False,
+                                                                                                                                synthetic_col_names=[''])
+        
+        #results.append((exp_var,cvar,predicted_target))
+
+        #with open('./results.pkl', 'wb') as file:
+        #    pickle.dump(results,file)
+        writer.close()
