@@ -40,6 +40,7 @@ class GAN():
                 generator_dropout = 0.1,
                 discriminator_dropout = 0.1,
                 KLIEP_downsample = 2500,
+                num_IG_lin_steps = 32,
                 device=torch.device('cuda:0'),
                 save_dict={},
                 save_dir = "",):
@@ -51,6 +52,7 @@ class GAN():
                  output_size,
                  device
         '''
+        self.num_IG_lin_steps = num_IG_lin_steps
         self.embedding_dict = dataset.embedding_dict
         self.lambda_first_layer = lambda_first_layer
         self.input_grad_history = []
@@ -169,7 +171,7 @@ class GAN():
         baseline_input=torch.mean(self.ground_truth_dataset,dim=0).to(self.device)
         all_inputs = compute_equispaced_inputs_IG(baseline_input=baseline_input,
                                         actual_input=self.bias_dataset.squeeze(0),
-                                        num_steps=32,
+                                        num_steps=self.num_IG_lin_steps,
                                         unsqueeze=True)
         mean_grad = compute_IG_weights(all_inputs=all_inputs,
                                          baseline_input=baseline_input,

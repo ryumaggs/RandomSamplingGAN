@@ -7,6 +7,7 @@ week: [29] #the week ID for HHP
 BATCHS_IN_EPOCH: 1
 EPOCHS: 300
 NUM_TRIALS: 1
+NUM_IG_LIN_STEPS: 32
 
 
 GT_LIMIT: 50000
@@ -23,7 +24,7 @@ SAVE_DICT:
 KLIEP_DOWNSAMPLE: *bias_limit  # equals BIAS_LIMIT
 
 LAMBDAGP: 10            # higher = less discriminator expressability
-LAMBDAW: 0.001        # .00075 for 10k .006 for 2.5k
+LAMBDAW: 0.003        # .00075 for 10k .003 for 2.5k
 LAMBDAD: 13.5
 LAMBDA_FIRST_LAYER: 0
 

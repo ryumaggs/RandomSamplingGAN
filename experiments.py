@@ -87,6 +87,7 @@ if __name__ == "__main__":
                 print(f"Directory '{trial_dir}' already exists.")
 
         hparams = {
+            "num_IG_lin_steps": config['NUM_IG_LIN_STEPS'],
             "glearningrate": config['GENERATOR_LEARNING_RATE'],
             "dlearningrate": config['DISCRIMINATOR_LEARNING_RATE'],
             "gen_layers": config['GEN_LAYERS'],
@@ -144,6 +145,7 @@ if __name__ == "__main__":
                     generator_dropout=hparams["generator_dropout"],
                     discriminator_dropout=hparams["discriminator_dropout"],
                     KLIEP_downsample=hparams['KLIEP_downsample'],
+                    num_IG_lin_steps=hparams['num_IG_lin_steps'],
                     save_dict=config['SAVE_DICT'],
                     save_dir = trial_dir,
                 )

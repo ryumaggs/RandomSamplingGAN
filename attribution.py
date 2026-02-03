@@ -89,7 +89,7 @@ def compute_IG_weights(all_inputs,
     '''
     printt = False
     tD = None
-    indexes = randomly_select_valid_points(X=unscaled_dataset,D=tD,K=1)
+    indexes = randomly_select_valid_points(X=unscaled_dataset,D=tD,K=np.inf)
     all_grads = [[] for _ in range(len(indexes))]
     integrated_grads = [None for _ in range(len(indexes))]
     gan.generator.eval()
