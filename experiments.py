@@ -43,22 +43,22 @@ DISCRIMINATOR_TRAINING_FACTOR = 8
 GT_LIMIT = 50000
 BIAS_LIMIT = 2500
 SAVE_DICT = {}
-SAVE_DICT['SAVE_IG'] = True
+SAVE_DICT['SAVE_IG'] = False
 SAVE_DICT['SAVE_DATASET'] = False
 SAVE_DICT['SAVE_WEIGHTS'] = False
 SAVE_DICT['SAVE_GENERATOR'] = False
 SAVE_DICT['SAVE_CRITIC'] = False
-SAVE_DICT['SAVE_EVERY'] = -1 #-1 means only save the last one
+SAVE_DICT['SAVE_EVERY'] = False #-1 means only save the last one
 
 KLIEP_DOWNSAMPLE = BIAS_LIMIT
 LAMBDAGP = 10 #hold this at 10. higher = less discriminator expressability
-LAMBDAW = 0.00075 #.00075 for 10k .006 for 2.5k
-LAMBDAD = 13.5 #13.5
+LAMBDAW = 0 #.003 #0.00075 #.00075 for 10k .006 for 2.5k
+LAMBDAD = 15 #13.5
 LAMBDA_FIRST_LAYER = 0
 GENERATOR_LEARNING_RATE = 1e-5 #2e-3 or 1e-5
 DISCRIMINATOR_LEARNING_RATE = 5e-5 #1e-3 or 5e-5
 BATCHS_IN_EPOCH = 1
-EPOCHS = 1
+EPOCHS = 300
 NUM_TRIALS = 1
 GEN_HISTORY_LENGTH = 0
 WARMUP_EPOCHS = 0
@@ -68,7 +68,7 @@ GEN_DROPOUT = 0.2
 DISC_DROPOUT = 0.2
 TEMPERATURE_START = 1
 TEMPERATURE_END = 0.3
-TEMPERATURE = 1 #0.1
+TEMPERATURE = 0.1
 
 DEBUG_MODE = False
 
@@ -141,7 +141,7 @@ def check_identical_networks(gan1, gan2):
 #weeks = ['Syn']
 #weeks = ['ALL']
 #weeks = ['lucid']
-weeks = list(range(29,30)) #for testing on HHP
+weeks = list(range(25,26)) #for testing on HHP
 #weeks = [35, 37, 39, 40, 42, 43, 44, 45] #for axios ipsos
 #weeks = [20,21,22,23,24,25] #for d4p
 #weeks = [45]
@@ -157,7 +157,7 @@ if __name__ == "__main__":
         #exp_vars['warmup_duration'] = [1000, 2000, 3000, 4000]
         #exp_vars['discriminator_dropout'] = [0.1, 0.2, 0.3]
         #exp_vars['dtrainingfactor'] = [8]
-        exp_vars['gtrainingfactor'] = [1]
+        #exp_vars['gtrainingfactor'] = [1]
         #exp_vars['warmup_epochs'] = [0]
         #exp_vars['lambdagp'] = [10]
         #exp_vars['dlearningrate'] = [5e-6]
@@ -167,10 +167,10 @@ if __name__ == "__main__":
         #exp_vars['subset_size'] = [32,64,128,256]
         #exp_vars['gen_training_factor'] = [2]
         #exp_vars['batch_size'] = [1,2]
-        #exp_vars['lambdaw'] = [.003]
+        #exp_vars['lambdaw'] = [.0025, .005, .0075]
         #exp_vars['tau'] = [0.05, 0.25, 0.55, 0.75, 0.95]
         #exp_vars['columns_to_keep'] = [('EDUC', 'INCTOT', 'AGE')] #['REGION', 'EDUC', 'INCTOT', 'SEX', 'MARST', 'FAMSIZE', 'RACE','AGE', 'BIDENPERC']
-        #exp_vars['lambdad'] = [10]
+        exp_vars['lambdad'] = [0,5,10,12.5,15,17.5,20]
         #exp_vars['KLIEP_downsample'] = [5000]
         #exp_vars['lambda_first_layer'] = [0]
         #exp_vars['epochs'] = [1000]

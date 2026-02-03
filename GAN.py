@@ -769,16 +769,17 @@ class WGAN_GP(GAN):
             #writer.add_scalar('Gen Learning rate', self.generator_optimizer.param_groups[0]['lr'],epoch)
             #writer.add_scalar('Disc Learning rate', self.discriminator_optimizer.param_groups[0]['lr'],epoch)
             #writer.add_scalar('Unique Counts', sum(unique_counts)/len(unique_counts), epoch)
-
-            if self.save_dict['SAVE_EVERY'] != -1 and epoch % self.save_dict['SAVE_EVERY'] == 0:
-                self.save(epoch=epoch)
+            if self.save_dict['SAVE_EVERY']:
+                if self.save_dict['SAVE_EVERY'] != -1 and epoch % self.save_dict['SAVE_EVERY'] == 0:
+                    self.save(epoch=epoch)
 
         if any(self.save_dict.values()):
             with open("./"+self.save_dir+"/embedding_dict_"+str(trial_id)+"_"+str(synthetic_col_names)+".pikl",'wb') as file:
                 pickle.dump(self.embedding_dict, file)
 
-        if self.save_dict['SAVE_EVERY'] == -1:
-            self.save(epoch=epochs)
+        if self.save_dict['SAVE_EVERY']:
+            if self.save_dict['SAVE_EVERY'] == -1:
+                self.save(epoch=epochs)
                     
         if self.save_dict['SAVE_IG']:
             self.compute_input_gradient_generator()
@@ -876,7 +877,6 @@ class WGAN_GP(GAN):
         return pen
     
     def train_generator(self, epoch, temperature_update = None):
-        
         self.discriminator.set_train()
         self.generator.set_train()
 
