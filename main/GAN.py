@@ -150,10 +150,10 @@ class GAN():
 
         self.KLIEP_downsample=min(KLIEP_downsample,self.unscaled_biased.shape[0])
 
-        self.original_distribution = None
-        if hasattr(dataset, "original_distribution"):
+        self.original_distributions = None
+        if hasattr(dataset, "original_distributions"):
             self.col_indexes = dataset.col_indexes
-            self.original_distribution = dataset.original_distribution
+            self.original_distributions = dataset.original_distributions
             self.var_counts = dataset.var_counts
 
     def compute_input_gradient_generator(self):
@@ -219,9 +219,8 @@ class GAN():
         batches = self.batch_size
         if batch_override is not None:
             batches = batch_override
-        #assert 1 == 0, "need to figure out what device and type ground_truth_dataset is here. sample WITHOUT replacement"
         index = self.rngs['np'].choice(np.arange(len(self.ground_truth_dataset)),size=self.truth_sample_size*batches,
-                                       replace=False)
+                                       replace=True)
         sampled_data = torch.clone(self.ground_truth_dataset[index])
         sampled_data = torch.reshape(sampled_data, (batches, self.truth_sample_size, self.ground_truth_dataset.shape[1])).to(self.device)
         #sampled_data = torch.reshape(sampled_data,(sampled_data.shape[0],sampled_data.shape[1]*sampled_data.shape[2]))
@@ -309,8 +308,6 @@ class GAN():
         return jsd / len(p_hists)
     
     def get_JSD_loss(self):
-        print("Here")
-        assert 1 == 0
         jsd_total = 0.0
         weights = self.generator.get_weights_regularizer(self.bias_dataset).T.squeeze()
         for i in range(self.unscaled_biased.shape[1]):
@@ -517,11 +514,13 @@ class GAN():
         return js_dist
 
     def measure_intersection_recovery(self):
-        col_indexes = self.col_indexes
-        weights = self.generator.get_weights_regularizer(self.bias_dataset).T.squeeze().cpu()
+        col_indexes = self.col_indexes[0]
+        self.generator.set_eval()
+        with torch.no_grad():
+            weights = self.generator.get_weights_regularizer(self.bias_dataset).T.squeeze().cpu().numpy()
         df = pd.DataFrame({
-        'col_i': self.unscaled_biased[:, col_indexes[0]],
-        'col_j': self.unscaled_biased[:, col_indexes[1]],
+        'col_i': self.unscaled_biased[:, col_indexes[0]].cpu().numpy(),
+        'col_j': self.unscaled_biased[:, col_indexes[1]].cpu().numpy(),
         'weight': weights})
         # Group by (col_i, col_j) and sum the weights
         joint = df.groupby(['col_i', 'col_j'])['weight'].sum()
@@ -530,11 +529,10 @@ class GAN():
         joint_prob = joint_prob.values
         #joint_prob = joint_prob.values.reshape((self.var_counts[0], self.var_counts[1]))
         
-        if self.original_distribution is not None:
-            jsd = jensenshannon(joint_prob, self.original_distribution, base=2) ** 2
+        if self.original_distributions is not None:
+            jsd = jensenshannon(joint_prob, self.original_distributions[0], base=2) ** 2
             return jsd
         else:
-            print(joint_prob)
             return 0
 
     def measure_vaccine(self):
@@ -548,6 +546,44 @@ class GAN():
         _, matrix, _ = self.generator.forward(self.bias_dataset)
         labels = matrix.cpu().numpy() @ self.biased_labels
         return np.mean(labels)
+    
+    def measure_synthetic_joint_gap(self,synthetic_col_info,bias_w):
+        synth_col_ids = list(synthetic_col_info.keys())[0]
+        i = synth_col_ids[0]
+        j = synth_col_ids[1]
+        C_i = int(self.num_categories_per_features[i])
+        C_j = int(self.num_categories_per_features[j])
+
+        gt_w = np.ones(self.unscaled_ground_truth.shape[0])
+
+        bias_joint = self.compute_synthetic_joint(i, C_i, j, C_j, self.unscaled_biased,bias_w)
+        gt_joint = self.compute_synthetic_joint(i, C_i, j, C_j, self.unscaled_ground_truth,gt_w)
+
+        diff = np.linalg.norm((bias_joint-gt_joint))
+        print(diff)
+
+    def compute_synthetic_joint(self,i, C_i, j, C_j, X, w):
+        xi = X[:, i].cpu().numpy().astype(np.int64, copy=False)
+        xj = X[:, j].cpu().numpy().astype(np.int64, copy=False)
+
+        # Optional safety checks (can comment out for speed)
+        if (xi < 0).any() or (xi >= C_i).any():
+            raise ValueError(f"Column {i} has values outside [0, {C_i-1}]")
+        if (xj < 0).any() or (xj >= C_j).any():
+            raise ValueError(f"Column {j} has values outside [0, {C_j-1}]")
+
+        flat_idx = xi * C_j + xj  # maps (xi,xj) -> [0, C_i*C_j)
+        joint = np.bincount(
+            flat_idx,
+            weights=w,
+            minlength=C_i * C_j
+        ).reshape(C_i, C_j)
+
+        s = joint.sum()
+        if s > 0:
+            joint = joint / s
+        return joint
+
 
     def train(self,
               batchs_in_epoch,
@@ -602,25 +638,8 @@ class WGAN_GP(GAN):
               writer,
               trial_id,
               synthetic,
-              synthetic_col_names = ""):
+              synthetic_col_info = None):
         
-        if False: #lr scheduler code
-            #lr scheduler for generator:
-            self.generator.min_lr = 1e-7
-            self.generator.reach_min_epoch = 100
-            gamma = np.exp(np.log(self.generator.min_lr / self.generator_starting_lr) / self.generator.reach_min_epoch)
-            self.generator_lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.generator_optimizer, gamma=gamma)
-
-            #lr scheduler for discminiator
-            self.discriminator.min_lr = 1e-9
-            reach_min_epoch = epochs - self.start_decay #(5 * epochs) // 10 #let it traing normally for first 50 epochs
-            gamma = np.exp(np.log(self.discriminator.min_lr / self.discriminator_starting_lr) / reach_min_epoch)
-            self.discriminator_lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.discriminator_optimizer, gamma=gamma)
-        
-        #print(['REGION', 'EDUC', 'INCTOT', 'SEX', 'MARST', 'RACE', 'AGE'])
-        #print(np.mean(self.unscaled_ground_truth,axis=0) - np.mean(self.unscaled_biased,axis=0))
-        #print("")
-        #return None, None, None, None, None, None, None
         prob_diffs = []
         generator_losses, discriminator_losses = [], []
         test_probs = []
@@ -629,24 +648,7 @@ class WGAN_GP(GAN):
         temp_gen_training_factor = gen_training_factor
         lambda_max = 250
         lambda_min = 50
-        #_, _, oweights = self.generator.forward(self.bias_dataset)
-        #oweights = torch.nn.functional.softmax(oweights,dim=0).to(self.device)
-        if False: #warmup code
-            oweights=None
-            for epoch in tqdm(range(warmup_epochs)):
-                discriminator_loss, tf_score, gp, gt_score, bias_score, unique_count = self.train_discriminator(epoch,
-                                                                                                                override_weights=oweights)
-                writer.add_scalar('Warmup disc loss', discriminator_loss, epoch)
-                self.discriminator_lr_scheduler.step()
-                self.compute_input_gradient_disc()
 
-            if False and self.save_weights:
-                np.savez("./"+self.save_dir+"/grad_history_"+str(trial_id)+"_"+str(synthetic_col_names)+".npz", 
-                        w=np.array(self.input_grad_history), wc=np.array(self.critic_input_grad_history))
-                with open("./"+self.save_dir+"/embedding_dict_"+str(trial_id)+"_"+str(synthetic_col_names)+".pikl",'wb') as file:
-                    pickle.dump(self.embedding_dict, file)
-        #return None, None, None, None, None, None, None
-    
         weight_history = []
         for epoch in tqdm(range(epochs)):
             #new_temp = self.get_temperature(epoch, epochs)
@@ -677,12 +679,15 @@ class WGAN_GP(GAN):
                         writer.add_scalar('weights^2 loss', self.lambda_weights*reg_loss, epoch)
                         #sparse_loss = self.first_layer_sparse_loss()
                         #writer.add_scalar('first  layer sparse loss', sparse_loss.item(), epoch)
+                    else:
+                        if False:
+                            self.generator.set_eval()
+                            with torch.no_grad():
+                                w = self.generator.get_weights_regularizer(self.bias_dataset).T.squeeze().cpu().numpy()   
+                            self.measure_synthetic_joint_gap(synthetic_col_info,bias_w=w)
+                        jsd = self.measure_intersection_recovery()
+                        writer.add_scalar("synth jsd", jsd, epoch)
 
-                        
-                if False and self.save_weights:
-                    #torch.save(self.generator, "./saves/generator"+str(epoch)+".pth")
-                    weights_np = np.array(weight_history)
-                    np.savez("./"+self.save_dir+"/weight_history_"+str(trial_id)+".npz", w=np.array(weight_history))
 
             generator_losses_1ep, generator_spread_reg_1ep, discriminator_loss_1ep, tf_scores_1ep, gps, gt_scores, bias_scores, all_gp_grads, all_gen_grads, weights = self.onestep_train(generator_training_factor=temp_gen_training_factor, 
                                                                                                                           discriminator_training_factor=temp_disc_training_factor,
@@ -852,7 +857,9 @@ class WGAN_GP(GAN):
         if self.lambda_weights > 0:
             spread_loss = self.get_reg_loss() #self.get_medium_entropy_loss()
         if self.lambda_demo > 0:
-            demo_loss = self.L_KLIEP() #self.get_JSD_loss()
+            demo_loss = self.L_KLIEP() + 10*self.get_JSD_loss()
+            #demo_loss = self.get_JSD_loss()
+            #demo_loss = self.L_KLIEP()
         #if self.lambda_first_layer > 0:
         #    first_l1 = self.first_layer_sparse_loss()
         if True:
@@ -861,12 +868,7 @@ class WGAN_GP(GAN):
                             + self.lambda_demo * demo_loss 
         else:
             generator_loss = self.lambda_demo * demo_loss
-        #print(self.lambda_first_layer * first_l1)
-        #print("values below T=0.1", (self.generator.phi[0].weight < 0.1).sum().item())
-        #print(bias_loss.item(), self.lambda_demo * demo_loss)
-        #exit(1)
-        #print(generator_loss)
-
+        #print(bias_loss.item(), self.lambda_demo * demo_loss, self.lambda_weights * spread_loss)
         if False:
             with torch.no_grad():
                 p0 = {}
@@ -924,7 +926,7 @@ class WGAN_GP(GAN):
         sds = []
         bias_unique_counts = [0]
         sds, selected_indices, weights = self.generator.forward(self.bias_dataset)
-        if True: #weights history
+        if False: #weights history
             for past_weight in self.weights_history:
                 indices = torch.multinomial(past_weight, self.sample_size, replacement=False)
                 sds_past = self.bias_dataset[indices].unsqueeze(0)
