@@ -14,6 +14,7 @@ from matplotlib import pyplot as plt
 #local imports
 from main.util import dict2vector, normalize_to_minus1_plus1, embed_data
 from DataProcessing.HouseholdCensusDataProcessing import *
+from typing import Dict, List, Tuple, Any, Optional
 
 class XBoxDatasetSimulation():
     def __init__(self,
@@ -146,8 +147,8 @@ class HouseholdPulse_dataset():
         self.biased_dataset = torch.tensor(self.biased_dataset,device=self.device,dtype=torch.float32)
 
     def var_setup(self):
-        self.unscaled_ground_truth = self.ground_truth_dataset
-        self.unscaled_biased = self.biased_dataset
+        self.unscaled_ground_truth = np.copy(self.ground_truth_dataset)
+        self.unscaled_biased = np.copy(self.biased_dataset)
 
         self.ground_truth = None
         self.ground_truth_demographics = None
@@ -290,7 +291,7 @@ class HouseholdPulse_synthetic(HouseholdPulse_dataset):
         '''
         self.label_indexes = list(label_information.values())
         self.num_labels = len(label_information)
-
+        self.label_names = list(label_information.keys())
         self.add_random_noise=add_random_noise
         self.max_num_ran_var=max_num_ran_var
         self.num_labels = 0
@@ -300,15 +301,21 @@ class HouseholdPulse_synthetic(HouseholdPulse_dataset):
         self.bias_limit = bias_limit
         rng = rngs
         raw_gt_load = self.load_csv(ground_truth_path)
-        self.ground_truth_dataset = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rng['seed_gt'])
-        
-        #remove perwt column from both gt and raw
+        #raw_gt_load = raw_gt_load.iloc[:,:3]
+        self.ground_truth_dataset = raw_gt_load
+        self.gt_weights = self.ground_truth_dataset.iloc[:,0].to_numpy()
         self.ground_truth_dataset.drop(self.ground_truth_dataset.columns[0], axis=1, inplace=True)
-        raw_gt_load.drop(raw_gt_load.columns[0], axis=1, inplace=True)
+        if False:
+            self.ground_truth_dataset = raw_gt_load.sample(n=gt_limit,
+                                                        weights=raw_gt_load['PERWT'],
+                                                        random_state=rng['seed_gt'])
+            #remove perwt column from both gt and raw
+            self.ground_truth_dataset.drop(self.ground_truth_dataset.columns[0], axis=1, inplace=True)
+            self.gt_weights = np.ones((self.ground_truth_dataset.shape[0]))
 
+        #cant drop since GT is now unique cells only
         self.embedding_dict = self.create_embedding_dictionary(raw_gt_load)
         self.num_categories_per_features = [raw_gt_load[col].nunique() for col in raw_gt_load.columns]
-        self.num_categories_per_features = self.num_categories_per_features[1:]
         self.column_names = []
         self.original_distributions = []
         self.col_indexes = []
@@ -316,15 +323,13 @@ class HouseholdPulse_synthetic(HouseholdPulse_dataset):
         self.joint_table = {}
 
         #pick two random variables
-        for _ in range(max_num_ran_var//2):
+        for _ in range(self.max_num_ran_var//2):
             self.pick_perturb_two_vars()
-        w = self.reweight_to_joint_targets(raw_gt_load,
-                                       targets=self.joint_table,)
+        w, diag = self.fit_weights_to_pairwise_joints(df=raw_gt_load,
+                                       pair_targets=self.joint_table,)
         
-        print(self.joint_table)
-        assert 1 == 0
         #sample with final w
-        idx = np.random.choice(raw_gt_load.shape[0], size=2500, replace=False, p=w)
+        idx = np.random.choice(raw_gt_load.shape[0], size=bias_limit, replace=True, p=w)
         sampled_df = raw_gt_load.iloc[idx]
         '''
         bl = bd[:,self.label_indexes]
@@ -340,10 +345,41 @@ class HouseholdPulse_synthetic(HouseholdPulse_dataset):
         #self.missing_values = self.has_missing_joints(new_joint_distr, col_i=var_1, col_j=var_2)
         self.biased_dataset = sampled_df.to_numpy(dtype=np.float, na_value=0)
         self.ground_truth_dataset = self.ground_truth_dataset.to_numpy(dtype=np.float, na_value=0)
-
+        self.biased_labels = np.ones(self.biased_dataset.shape[0])
         self.var_setup()
-        if self.add_random_noise:
-            self.add_random_noise()
+
+        if False: #debbugging up sampling code
+            if self.add_random_noise:
+                self.add_random_noise()
+            w = np.ones(self.unscaled_biased.shape[0])
+            i = self.col_indexes[0][0]
+            j = self.col_indexes[0][1]
+            C_i = int(self.num_categories_per_features[i])
+            C_j = int(self.num_categories_per_features[j])
+
+            xi = self.unscaled_biased[:, i].astype(np.int64, copy=False)
+            xj = self.unscaled_biased[:, j].astype(np.int64, copy=False)
+
+            # Optional safety checks (can comment out for speed)
+            if (xi < 0).any() or (xi >= C_i).any():
+                raise ValueError(f"Column {i} has values outside [0, {C_i-1}]")
+            if (xj < 0).any() or (xj >= C_j).any():
+                raise ValueError(f"Column {j} has values outside [0, {C_j-1}]")
+
+            flat_idx = xi * C_j + xj  # maps (xi,xj) -> [0, C_i*C_j)
+            joint = np.bincount(
+                flat_idx,
+                weights=w,
+                minlength=C_i * C_j
+            ).reshape(C_i, C_j)
+
+
+            s = joint.sum()
+            if s > 0:
+                joint = joint / s
+            print(joint)
+            assert 1 == 0
+        
 
     def pick_perturb_two_vars(self):
         all_columns = list(self.ground_truth_dataset.columns)
@@ -386,7 +422,6 @@ class HouseholdPulse_synthetic(HouseholdPulse_dataset):
         """
         N = len(df)
         w = np.ones(N) / N  # start with uniform weights
-
         for it in range(max_iter):
             w_old = w.copy()
             for (i, j), target in targets.items():
@@ -414,6 +449,216 @@ class HouseholdPulse_synthetic(HouseholdPulse_dataset):
                 break
         
         return w
+    
+    def fit_weights_to_pairwise_joints(self,
+        df: pd.DataFrame,
+        pair_targets: List[Dict[Tuple[int, int], np.ndarray]],
+        *,
+        max_iter: int = 500,
+        tol: float = 1e-8,
+        damping: float = 1.0,
+        eps: float = 1e-12,
+        normalize_weights: bool = True,
+        return_diagnostics: bool = True,
+        verbose: bool = False,
+    ) -> Any:
+        """
+        Compute a weight vector over unique rows of df so that specified pairwise joint
+        distributions are matched as closely as possible via iterative proportional fitting (IPF).
+
+        Assumptions:
+        - Each row in df is a unique categorical combination (no duplicate rows).
+        - df columns are categorical variables encoded as integers.
+        - For each constraint (i, j), the target is a 2D array T with shape (C_i, C_j)
+            representing desired joint probabilities (or nonnegative mass; we normalize).
+
+        Inputs:
+        df: (N, D) dataframe of categorical codes.
+        pair_targets: list of dictionaries; each dict: {(i,j): target_2d, ...}
+                        You can pass a single dict; list lets you merge multiple sources easily.
+
+        Algorithm:
+        - Initialize weights w uniform.
+        - For each constraint (i,j):
+            compute current joint J_ij from w
+            update each row weight multiplicatively by ratio = T[a,b]/J[a,b]
+            (optionally damped).
+        - Iterate until max absolute joint error across constraints < tol.
+
+        Returns:
+        If return_diagnostics:
+            (w, diagnostics_dict)
+        else:
+            w
+
+        Notes:
+        - If some target cells have positive mass but df has *no rows* for that (a,b),
+            the constraints are infeasible. We detect and report it; IPF cannot create support.
+        - If you want least-squares optimal weights under infeasibility, that becomes a
+            constrained optimization problem; this IPF approach finds the max-entropy / log-linear
+            solution when feasible (and a “best effort” when not, but may stall).
+        """
+        # ---- Flatten list of dicts into one dict of constraints ----
+        constraints: Dict[Tuple[int, int], np.ndarray] = pair_targets
+        if len(constraints) == 0:
+            raise ValueError("No constraints provided in pair_targets.")
+
+        X = df.to_numpy()
+        if X.ndim != 2:
+            raise ValueError(f"df must be 2D; got array shape {X.shape}")
+        N, D = X.shape
+
+        # Ensure integer-coded
+        if not np.issubdtype(X.dtype, np.integer):
+            # Try safe conversion if it's categorical/object containing ints
+            try:
+                X = X.astype(np.int64)
+            except Exception as e:
+                raise ValueError("df must contain integer-coded categories.") from e
+
+        # ---- Precompute per-constraint row->flat-cell mapping and support masks ----
+        precomp = []
+        infeasible = []  # store messages for infeasible constraints
+
+        for (i, j), T in constraints.items():
+            if not (0 <= i < D and 0 <= j < D):
+                raise IndexError(f"Constraint {(i,j)} out of bounds for df with D={D}.")
+            if T.ndim != 2:
+                raise ValueError(f"Target for {(i,j)} must be 2D; got shape {T.shape}.")
+            if (T < 0).any():
+                raise ValueError(f"Target for {(i,j)} contains negative entries.")
+            Ti = T.copy()
+            sT = Ti.sum()
+            if sT <= 0:
+                raise ValueError(f"Target for {(i,j)} sums to 0; cannot fit.")
+            Ti /= sT  # normalize to probability mass
+
+            Ci, Cj = Ti.shape
+            xi = X[:, i]
+            xj = X[:, j]
+
+            # validate 0-based and within target shape
+            if xi.min() < 0 or xi.max() >= Ci:
+                raise ValueError(
+                    f"Column {i} has values outside [0,{Ci-1}] for constraint {(i,j)}."
+                )
+            if xj.min() < 0 or xj.max() >= Cj:
+                raise ValueError(
+                    f"Column {j} has values outside [0,{Cj-1}] for constraint {(i,j)}."
+                )
+
+            flat = xi * Cj + xj  # shape (N,)
+
+            # Support: which (a,b) cells exist in df?
+            support_counts = np.bincount(flat, minlength=Ci * Cj)
+            support_mask = support_counts.reshape(Ci, Cj) > 0
+
+            # If target puts mass where there is no support, infeasible
+            missing_mass = float(Ti[~support_mask].sum())
+            if missing_mass > 0:
+                infeasible.append(
+                    f"Constraint {(i,j)} infeasible: target assigns {missing_mass:.6g} "
+                    f"probability to (a,b) pairs not present in df support."
+                )
+
+            precomp.append((i, j, Ci, Cj, Ti, flat, support_mask))
+
+        # ---- Initialize weights ----
+        w = np.full(N, 1.0 / N, dtype=np.float64)
+
+        def compute_joint_from_flat(w_vec: np.ndarray, flat_idx: np.ndarray, Ci: int, Cj: int) -> np.ndarray:
+            joint = np.bincount(flat_idx, weights=w_vec, minlength=Ci * Cj).reshape(Ci, Cj)
+            return joint
+
+        # ---- IPF iterations ----
+        max_err_history = []
+        for it in tqdm(range(max_iter)):
+            # Apply one full sweep over constraints
+            for (i, j, Ci, Cj, Ti, flat, support_mask) in precomp:
+                J = compute_joint_from_flat(w, flat, Ci, Cj)
+
+                # Avoid division by zero:
+                # - Where support exists but J is ~0, add eps
+                # - Where support does not exist, ratio shouldn't matter because no rows map there
+                denom = np.where(support_mask, J, 1.0)
+                denom = np.maximum(denom, eps)
+
+                ratio = Ti / denom
+                # For numerical stability, cap extreme ratios a bit (optional).
+                # You can comment these two lines out if you prefer exact updates.
+                ratio = np.clip(ratio, 0.0, 1.0 / eps)
+
+                # Map each row to its cell ratio
+                row_ratio = ratio.reshape(-1)[flat]  # shape (N,)
+
+                if damping != 1.0:
+                    # damped multiplicative update: w *= row_ratio^damping
+                    w *= np.power(row_ratio, damping)
+                else:
+                    w *= row_ratio
+
+                # Renormalize to keep weights in a sane scale
+                s = w.sum()
+                if s <= 0 or not np.isfinite(s):
+                    raise FloatingPointError(
+                        f"Weight normalization failed at iter {it} for constraint {(i,j)}."
+                    )
+                w /= s
+
+            # Compute max error after sweep
+            max_abs_err = 0.0
+            mean_abs_err = 0.0
+            n_constraints = 0
+
+            for (i, j, Ci, Cj, Ti, flat, support_mask) in precomp:
+                J = compute_joint_from_flat(w, flat, Ci, Cj)
+                # Compare only on supported cells (unsupported cells can't be matched anyway)
+                diff = np.abs((J - Ti)[support_mask])
+                if diff.size > 0:
+                    max_abs_err = max(max_abs_err, float(diff.max()))
+                    mean_abs_err += float(diff.mean())
+                    n_constraints += 1
+
+            mean_abs_err = mean_abs_err / max(n_constraints, 1)
+            max_err_history.append(max_abs_err)
+
+            if verbose and (it % 25 == 0 or it == max_iter - 1):
+                print(f"[iter {it:4d}] max_abs_err={max_abs_err:.3e}, mean_abs_err={mean_abs_err:.3e}")
+
+            if max_abs_err < tol:
+                break
+
+        if normalize_weights:
+            w /= w.sum()
+
+        if not return_diagnostics:
+            return w
+
+        # ---- Diagnostics ----
+        fitted = {}
+        errors = {}
+        for (i, j, Ci, Cj, Ti, flat, support_mask) in precomp:
+            J = compute_joint_from_flat(w, flat, Ci, Cj)
+            fitted[(i, j)] = J
+            # store summary errors
+            diff = (J - Ti)
+            diff_supported = diff[support_mask]
+            errors[(i, j)] = {
+                "max_abs_err_supported": float(np.max(np.abs(diff_supported))) if diff_supported.size else 0.0,
+                "mean_abs_err_supported": float(np.mean(np.abs(diff_supported))) if diff_supported.size else 0.0,
+                "missing_target_mass_unsupported": float(Ti[~support_mask].sum()),
+            }
+
+        diagnostics = {
+            "converged": (len(max_err_history) > 0 and max_err_history[-1] < tol),
+            "iterations_used": len(max_err_history),
+            "max_abs_err_history": max_err_history,
+            "constraint_errors": errors,
+            "infeasibility_warnings": infeasible,
+            "fitted_joints": fitted,  # matrices
+        }
+
+        return w, diagnostics
 
     def add_random_noise(self):
         categories_list = [np.random.randint(2,9) for _ in range(len(self.embedding_dict))]
