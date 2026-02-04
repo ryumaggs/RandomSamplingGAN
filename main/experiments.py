@@ -42,15 +42,17 @@ GENERATOR_TRAINING_FACTOR = 1
 DISCRIMINATOR_TRAINING_FACTOR = 8
 GT_LIMIT = 50000
 BIAS_LIMIT = 10000 #10000
+GT_LIMIT_SYNTHETIC = 5000
+BIAS_LIMIT_SYNTHETIC = 2500
 SAVE_DICT = {}
-SAVE_DICT['SAVE_DATASET'] = False
+SAVE_DICT['SAVE_DATASET'] = True
 SAVE_DICT['SAVE_WEIGHTS'] = False
 SAVE_DICT['SAVE_IG'] = False
 SAVE_DICT['SAVE_GENERATOR'] = False
 
 KLIEP_DOWNSAMPLE = BIAS_LIMIT
 LAMBDAGP = 10 #hold this at 10. higher = less discriminator expressability
-LAMBDAW = 0.001 #.00075 for 10k
+LAMBDAW = 0.003 #.00075 for 10k
 LAMBDAD = 13.5 #13.5
 LAMBDA_FIRST_LAYER = 0
 GENERATOR_LEARNING_RATE = 1e-5 #2e-3 or 1e-5
@@ -60,7 +62,7 @@ EPOCHS = 300
 NUM_TRIALS = 1
 GEN_HISTORY_LENGTH = 0
 WARMUP_EPOCHS = 0
-GEN_LAYERS = [1024, 1024, 1024] #[256 for _ in range(5)]
+GEN_LAYERS = [256, 256] #[1024, 1024, 1024] #[256 for _ in range(5)]
 DISC_LAYERS = [256, 256]
 GEN_DROPOUT = 0.2
 DISC_DROPOUT = 0.2
@@ -245,7 +247,7 @@ def train(census_dataset_path,
                                                                                                                                 writer,
                                                                                                                                 tid,
                                                                                                                                 synthetic=False,
-                                                                                                                                synthetic_col_names=[''])
+                                                                                                                                synthetic_col_info=[''])
         
         #results.append((exp_var,cvar,predicted_target))
 
@@ -327,8 +329,9 @@ def train_synthetic(census_dataset_path,
                         label_information = {'RECVDVACC':0},
                         device=train_device,
                         columns_to_keep = None,
-                        gt_limit = GT_LIMIT,
-                        bias_limit = BIAS_LIMIT, 
+                        gt_limit = GT_LIMIT_SYNTHETIC,
+                        bias_limit = BIAS_LIMIT_SYNTHETIC, 
+                        max_num_ran_var=2,
                         )
         #devices have been checked. should work with device input
         
@@ -389,8 +392,8 @@ def train_synthetic(census_dataset_path,
                                                                                                                                 SAVE_EVERY,
                                                                                                                                 writer,
                                                                                                                                 tid,
-                                                                                                                                synthetic=False,
-                                                                                                                                synthetic_col_names=[''])
+                                                                                                                                synthetic=True,
+                                                                                                                                synthetic_col_info=d.joint_table)
         
         #results.append((exp_var,cvar,predicted_target))
 
