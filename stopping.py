@@ -17,7 +17,6 @@ def pairwise_weighted_minibatch_scores(
     K: int,
     minibatch_size: int = 32,
     *,
-    replace: bool = True,
     device: Optional[torch.device] = None,
     seed: Optional[int] = None,
     use_eval: bool = True,
@@ -101,20 +100,24 @@ def pairwise_weighted_minibatch_scores(
 
         # Sample indices: shape (K, minibatch_size)
         # This samples each minibatch independently using the same distribution p.
-        idx = rng.choice(
-            M,
-            size=(K, minibatch_size),
-            replace=replace,
-            p=p,
-        )
+        batch_t = []
+        for k in range(K):
+            idx = rng.choice(
+                M,
+                size=(minibatch_size),
+                replace=False,
+                p=p,
+            )
 
-        # Gather minibatches: shape (K, minibatch_size, D)
-        idx_t = torch.from_numpy(idx).long()
-        batch_t = X_t[idx_t]  # advanced indexing on CPU
+            # Gather minibatches: shape (K, minibatch_size, D)
+            idx_t = torch.from_numpy(idx).long()
+            batch_t.append(X_t[idx_t])  # advanced indexing on CPU
+        batch_t = torch.stack(batch_t,dim=0)
 
         for j, bk in enumerate(b_keys):
             net = B[bk]
-
+            if use_eval:
+                net.set_eval()
             # Infer device from network if not provided
             net_device = device
             if net_device is None:
@@ -126,9 +129,7 @@ def pairwise_weighted_minibatch_scores(
             batch_in = batch_t.to(net_device, non_blocking=True)
 
             # Run forward pass
-            prev_training = net.training
-            if use_eval:
-                net.eval()
+
             with torch.no_grad():
                 out = net(batch_in)
 
@@ -140,15 +141,14 @@ def pairwise_weighted_minibatch_scores(
                 # Reduce to scalar: mean over all elements (covers (K, ...), any shape)
                 score = out.float().mean().item()
 
-            if use_eval and prev_training:
-                net.train(True)
-
             scores[i, j] = score
 
     for j, bk in enumerate(b_keys):
         net = B[bk]
+        if use_eval:
+            net.set_eval()
         index = np.random.choice(np.arange(len(gt_dataset)),size=minibatch_size*K,
-                                       replace=False)
+                                       replace=True)
         sampled_data = torch.tensor(gt_dataset[index])
         sampled_data = embed_data(None,embedding_dict,sampled_data,overrite_start_idx=0)
         sampled_data = torch.reshape(sampled_data, (K, minibatch_size, X.shape[1])).to(device).float()
@@ -176,10 +176,9 @@ def rescale_01(M):
 
     return (M - m_min) / (m_max - m_min)
 
-
 def exp3_ix_selfplay_2p0s(
     L: np.ndarray,
-    T: int = 50_000,
+    T: int = 100000,
     *,
     eta1: Optional[float] = None,
     gamma1: Optional[float] = None,
@@ -339,7 +338,8 @@ saved_every = 20
 
 gt_data = (pd.read_csv('./data/censusHouseholdPulse_data/cleaned/ipums_cleaned_combined.csv').to_numpy(dtype=float, na_value=0))[:,1:]
 
-for f in folders:
+all_results = {}
+for counter, f in enumerate(folders):
     main_folder = os.path.join(save_folder,f)
     trial_id = int(f.split(":")[1])
 
@@ -396,19 +396,40 @@ for f in folders:
         X= x.squeeze(),
         gt_dataset=gt_data,
         embedding_dict=embed_dict,
-        K= 10,
-        minibatch_size=32,
+        K= 20,
+        minibatch_size=128,
         device=torch.device('cuda:0'),
         seed = 0,
         use_eval = True,)
     
-    conf_matrix = out[0][10:,1:]
+    weight_start_idx = 2
+    nn_start_idx = 1
+    conf_matrix = out[0][weight_start_idx:,nn_start_idx:]
     conf_matrix = rescale_01(conf_matrix)
-    print(conf_matrix[0,:])
-    
 
     out = exp3_ix_selfplay_2p0s(L=conf_matrix)
-    print(out)
-    break
+    # print(out['p1_avg'])
 
+    sum_pred = 0
+    for i in range(out['p1_avg'].shape[0]):
+        weights_idx = (weight_start_idx + i)*20
+        sum_pred += (all_weights[weights_idx] @ y)*out['p1_avg'][i]
+
+    highest_idx = np.argmax(out['p1_avg'])
+    highest_true = (highest_idx + weight_start_idx)*20
+
+    highest_nn_idx = np.argmax(out['p2_avg'])
+    highest_nn_true = (highest_nn_idx + nn_start_idx)*20
+
+    all_results[f] = {}
+    all_results[f]['last'] = all_weights[580] @ y
+    all_results[f]['avg'] = sum_pred
+    all_results[f]['best'] = all_weights[highest_true] @ y
+    all_results[f]['idx_info'] = [highest_idx, highest_true]
+    all_results[f]['nn_idx'] = [highest_nn_idx, highest_nn_true]
+
+for key in all_results:
+    print(key)
+    print(all_results[key])
+    print("")
 #print(out[0])

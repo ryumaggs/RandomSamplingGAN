@@ -10,6 +10,9 @@ import os
 from scipy.stats import spearmanr
 from scipy.signal import find_peaks
 from scipy.ndimage import uniform_filter1d
+from tqdm import tqdm
+import pickle
+import torch
 
 def plot_2d_runs(data):
     # Compute mean and standard deviation across experiments
@@ -56,7 +59,7 @@ def load_runs_as_numpy(runs_path, var_names, filter_by, num_runs=9):
             else:
                 event_files.append(os.path.join(run_folder,name))
     all_data = {}
-    for i_name, vname in enumerate(var_names):
+    for i_name, vname in tqdm(enumerate(var_names)):
         all_data[vname] = []
         for i, event_file in enumerate(event_files):
             # Load event accumulator
@@ -298,103 +301,6 @@ def oscillation_range_normalized(matrix):
     per_row_mad = np.mean(np.abs(np.diff(matrix, axis=1)), axis=1)
     return np.mean(per_row_mad / ranges), np.mean(matrix,axis=1)
 
-def entropy_pred_relationship(runs_path, filter_by, num_runs,target_var_name):
-    out, event_files = load_runs_as_numpy(runs_path,  
-                             [target_var_name, 'GenLoss', 'Gen Entropy', 
-                              'tvd', 'Warmup', 'Bias score', 'Gradient Penalty'],
-                             filter_by=filter_by,
-                             num_runs=num_runs)
-    print("")
-    print("-----------------------------------")
-    print("Filter by: ", filter_by)
-    vpt = out[target_var_name]
-    gloss = out['GenLoss']
-    entropy = out['Gen Entropy']
-    warmup = out['Warmup']
-    bscore = out['Bias score']
-    gp = out['Gradient Penalty']
-    tvd = out['tvd']
-    print(vpt.shape)
-    #oscore, omean = oscillation_range_normalized(gp)
-    #tvd_score, tvd_mean = oscillation_range_normalized(tvd)
-    #print("Gradient Penalty: ")
-    #print("oscillation  score: ", oscore)
-    #print("average gp over time and exp: ", np.mean(omean))
-    #print("TVD: ")
-    #print("oscillation score: ", tvd_score)
-    #print("average gp over time and exp: ", np.mean(tvd_mean))
-    #indices_in_range = np.where((entropy[0] >= 0.75) & (entropy[0] <= 0.8))[0]
-    #t_f_scores = out['Truth - Fake scores']
-    
-    order = np.arange(vpt.shape[0])
-    start_point = 0
-    end_point = 500 #len(entropy[0])
-    #indices = np.arange(len(entropy[0,start_point:end_point]))
-    labels = ['entropy', 'truth-fake', 'tvd']
-    selected_x_axis = entropy
-    #vpt_b= vpt[:,start_point:end_point]
-    #print((np.argmin(np.abs(vpt_b.mean(axis=0) - 0.6))) + start_point)
-    #print((np.min(np.abs(vpt_b.mean(axis=0) - 0.6))))
-    #if False: #old analysis 
-    if True:
-        for k in [5]: #[1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]:
-            #k = 20  # number of smallest elements per row
-            # Get indices of the k smallest elements per row
-            idx = np.argpartition(selected_x_axis, k, axis=1)[:, :k]
-            # Use advanced indexing to gather corresponding B values
-            rows = np.arange(selected_x_axis.shape[0])[:, None]
-            selected_B = vpt[rows, idx]
-            #plt.scatter(selected_B, np.zeros_like(selected_B), alpha=0.6, s=20)
-            #plt.show()
-            # Compute row-wise means
-            mean_B = np.mean(selected_B, axis=1)
-            print(k, np.mean(mean_B),"|| +/- ",np.std(mean_B))
-        print("")
-        return None
-
-        fig, axs = plt.subplots(3, 3, figsize=(10, 10))
-        for i in order[0:9]:
-            name = ""
-            ''' puts the week/file as the name
-            parts = event_files[i].split("||", 2)
-            if len(parts) >= 3:
-                name = parts[1]
-            if i > vpt.shape[0]:
-                break
-            '''
-            #warmup_mean = np.mean(warmup[i,-50:])
-            name = "" #str(round(warmup_mean,3))
-            
-            row, col = divmod(i, 3)
-            minidx, _, smoothed = find_trend_plateau(vpt[i], smooth_sigma = 20)
-            print(minidx, np.mean(vpt[i,max(0,minidx-2):minidx+2]))
-            norm_entrop = normalize_0_1(entropy[i,start_point:end_point])
-            norm_tvd = normalize_0_1(tvd[i,start_point:end_point])
-            norm_score = normalize_0_1(bscore[i,start_point:end_point])
-            norm_gp = normalize_0_1(gp[i,start_point:end_point])
-
-            x_axis =  entropy[i,start_point:end_point]
-            y_axis = vpt[i,start_point:end_point]
-            sc = axs[row,col].scatter(x_axis,y_axis,c=indices, cmap='viridis')
-            axs[row,col].set_title(name)
-            #sc = axs[row+1,col].scatter(t_f_scores[i,start_point:end_point],vpt[i,start_point:end_point],c=indices, cmap='viridis')
-            #sc = axs[row+2,col].scatter(tvd[i,start_point:end_point],vpt[i,start_point:end_point],c=indices, cmap='viridis')
-            #fig.text(0.05, 0.85 - i * 0.3, labels[i], va='center', ha='right', fontsize=12)
-
-        if sc is not None:
-            cbar = fig.colorbar(sc, ax=axs, orientation='vertical', shrink=0.8)
-            cbar.set_label('Time Index')
-
-        return indices_in_range
-
-    #data = np.load("./saves/data.npz")
-    #weights = np.load("./saves/weight_history.npz")
-
-    #labels = data['y']
-    #weights = weights['w']
-    #pws = (weights @ labels).T
-    #print("diff: ", np.linalg.norm(pws-vpt))
-
 def success_rate_by_window_comparison(runs_path, filter_by, num_runs, window_length):
     """
     Compares the average of the first K and last K points for each row in a 2D array.
@@ -625,7 +531,6 @@ def absolute_analysis(out):
         print(f"Aux {j}: Mean Y at top {top_K} minima across all experiments = {Y_min_topK_agg[j]:.3f}")
         print("")
 
-
 def peak_analysis(out):
     '''
     out - output from load_numpy runs
@@ -731,3 +636,303 @@ def peak_analysis(out):
         print(f"Aux {j}: Mean Y at top {top_K} maxima across all experiments = {Y_max_topK_agg[j]:.3f}")
         print(f"Aux {j}: Mean Y at top {top_K} minima across all experiments = {Y_min_topK_agg[j]:.3f}")
         print("")
+
+def entropy_pred_relationship(runs_path, filter_by, num_runs,
+                              target_var_name,
+                              metric_tb_name,
+                              K=5):
+    out, event_files = load_runs_as_numpy(runs_path,  
+                             [target_var_name, 'GenLoss', 'Gen Entropy', 
+                              'tvd', 'Warmup', 'Bias score', 'Gradient Penalty',metric_tb_name],
+                             filter_by=filter_by,
+                             num_runs=num_runs,
+                             )
+    print("")
+    print("-----------------------------------")
+    print("Filter by: ", filter_by)
+    vpt = out[target_var_name]
+    gloss = out['GenLoss']
+    entropy = out['Gen Entropy']
+    warmup = out['Warmup']
+    bscore = out['Bias score']
+    gp = out['Gradient Penalty']
+    tvd = out['tvd']
+    metric = out[metric_tb_name]
+    print(vpt.shape)
+    #oscore, omean = oscillation_range_normalized(gp)
+    #tvd_score, tvd_mean = oscillation_range_normalized(tvd)
+    #print("Gradient Penalty: ")
+    #print("oscillation  score: ", oscore)
+    #print("average gp over time and exp: ", np.mean(omean))
+    #print("TVD: ")
+    #print("oscillation score: ", tvd_score)
+    #print("average gp over time and exp: ", np.mean(tvd_mean))
+    #indices_in_range = np.where((entropy[0] >= 0.75) & (entropy[0] <= 0.8))[0]
+    #t_f_scores = out['Truth - Fake scores']
+    
+    order = np.arange(vpt.shape[0])
+    start_point = 0
+    end_point = 600 #len(entropy[0])
+    #indices = np.arange(len(entropy[0,start_point:end_point]))
+    labels = ['entropy', 'truth-fake', 'tvd']
+    selected_x_axis = metric #entropy
+    #vpt_b= vpt[:,start_point:end_point]
+    #print((np.argmin(np.abs(vpt_b.mean(axis=0) - 0.6))) + start_point)
+    #print((np.min(np.abs(vpt_b.mean(axis=0) - 0.6))))
+    #if False: #old analysis 
+    if True: #entropy
+        for k in [K]: #[1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]:
+            #k = 20  # number of smallest elements per row
+            # Get indices of the k smallest elements per row
+            idx = np.argpartition(selected_x_axis, k, axis=1)[:, :k]
+            # Use advanced indexing to gather corresponding B values
+            rows = np.arange(selected_x_axis.shape[0])[:, None]
+            selected_B = vpt[rows, idx]
+            #plt.scatter(selected_B, np.zeros_like(selected_B), alpha=0.6, s=20)
+            #plt.show()
+            # Compute row-wise means
+            mean_B = np.mean(selected_B, axis=1)
+            print(k, np.mean(mean_B),"|| +/- ",np.std(mean_B))
+        print("")
+
+        if False:
+            fig, axs = plt.subplots(3, 3, figsize=(10, 10))
+            for i in order[0:9]:
+                name = ""
+                ''' puts the week/file as the name
+                parts = event_files[i].split("||", 2)
+                if len(parts) >= 3:
+                    name = parts[1]
+                if i > vpt.shape[0]:
+                    break
+                '''
+                #warmup_mean = np.mean(warmup[i,-50:])
+                name = "" #str(round(warmup_mean,3))
+                
+                row, col = divmod(i, 3)
+                minidx, _, smoothed = find_trend_plateau(vpt[i], smooth_sigma = 20)
+                print(minidx, np.mean(vpt[i,max(0,minidx-2):minidx+2]))
+                norm_entrop = normalize_0_1(entropy[i,start_point:end_point])
+                norm_tvd = normalize_0_1(tvd[i,start_point:end_point])
+                norm_score = normalize_0_1(bscore[i,start_point:end_point])
+                norm_gp = normalize_0_1(gp[i,start_point:end_point])
+
+                x_axis =  entropy[i,start_point:end_point]
+                y_axis = vpt[i,start_point:end_point]
+                sc = axs[row,col].scatter(x_axis,y_axis,c=indices, cmap='viridis')
+                axs[row,col].set_title(name)
+                #sc = axs[row+1,col].scatter(t_f_scores[i,start_point:end_point],vpt[i,start_point:end_point],c=indices, cmap='viridis')
+                #sc = axs[row+2,col].scatter(tvd[i,start_point:end_point],vpt[i,start_point:end_point],c=indices, cmap='viridis')
+                #fig.text(0.05, 0.85 - i * 0.3, labels[i], va='center', ha='right', fontsize=12)
+
+            if sc is not None:
+                cbar = fig.colorbar(sc, ax=axs, orientation='vertical', shrink=0.8)
+                cbar.set_label('Time Index')
+
+            return indices_in_range
+
+    if False: #rate of change
+        diffs = np.abs(np.diff(vpt))  # shape (N, T-1)
+        K = 1e-6
+        # Boolean mask where condition holds
+        mask = diffs < K  # shape (N, T-1)
+
+        # Find first True per row
+        first_indices = np.argmax(mask, axis=1)
+
+        # If a row never satisfies condition, argmax returns 0 incorrectly.
+        # So we check which rows actually contain any True.
+        has_valid = mask.any(axis=1)
+        first_indices = np.where(has_valid, first_indices, -1)
+        rows = np.arange(vpt.shape[0])
+        print(first_indices)
+        print("roc: ", np.mean(vpt[rows,first_indices]),np.std(vpt[rows,first_indices]))
+    #data = np.load("./saves/data.npz")
+    #weights = np.load("./saves/weight_history.npz")
+
+    #labels = data['y']
+    #weights = weights['w']
+    #pws = (weights @ labels).T
+    #print("diff: ", np.linalg.norm(pws-vpt))
+
+def count_row_differences(X, Y):
+    """
+    Returns:
+        x_not_in_y : number of rows in X that do not appear in Y
+        y_not_in_x : number of rows in Y that do not appear in X
+    """
+
+    # Convert rows to structured dtype so NumPy can compare row-wise
+    X_view = np.ascontiguousarray(X).view(
+        np.dtype((np.void, X.dtype.itemsize * X.shape[1]))
+    )
+    Y_view = np.ascontiguousarray(Y).view(
+        np.dtype((np.void, Y.dtype.itemsize * Y.shape[1]))
+    )
+
+    # Unique row sets
+    X_unique = np.unique(X_view)
+    Y_unique = np.unique(Y_view)
+
+    # Set differences
+    x_not_in_y = np.setdiff1d(X_unique, Y_unique).shape[0]
+    y_not_in_x = np.setdiff1d(Y_unique, X_unique).shape[0]
+
+    return x_not_in_y, y_not_in_x
+
+def count_row_differences_manual(X,Y):
+
+    num_unique_rows = np.unique(X, axis=0).shape[0]
+    print(num_unique_rows)
+    x_in_y_counter = 0
+    for x_i in range(X.shape[0]):
+        if np.any(np.all(X[x_i] == Y,axis=1)):
+            x_in_y_counter += 1
+
+    y_in_x_counter = 0
+    for y_i in range(Y.shape[0]):
+        if np.any(np.all(Y[y_i] == X,axis=1)):
+            y_in_x_counter += 1    
+    print(x_in_y_counter, y_in_x_counter)
+    exit(1)
+
+def analayze_post_weighting(save_path):
+    folders = os.listdir(save_path)
+    print(folders)
+    for counter, f in enumerate(folders):
+        main_folder = os.path.join(save_path,f)
+        trial_id = int(f.split(":")[1])
+
+        embed_name = "embedding_dict_"+str(trial_id)+"_.pikl"
+        with open(os.path.join(main_folder,embed_name), 'rb') as file:
+            embed_dict = pickle.load(file)
+
+        data_name = "data_"+str(trial_id)+".npz"
+        one_hot_data_name = "one_hot_data_"+str(trial_id)+".npz"
+
+        data = np.load(os.path.join(main_folder,data_name))
+        #one_hot_data = np.load(os.path.join(main_folder, one_hot_data_name))
+        x = data['x']
+        y = data['y']
+
+        weights_name = "weights_"+str(500)+".npz"
+        gen_weights = np.load(os.path.join(main_folder,weights_name))['w'].flatten()
+        print(gen_weights.shape)
+        print(x.shape)
+        print(type(x))
+        ground_truth_path='./data/censusHouseholdPulse_data/cleaned/ipums_cleaned_combined.csv'
+        gt = pd.read_csv(ground_truth_path)
+        column_names = gt.columns.tolist()[1:]
+        gt = gt.to_numpy()
+        gt_probs = gt[:,0]
+        gt = gt[:,1:]
+        #x_not_in_y, y_not_in_x = count_row_differences_manual(x, gt)
+
+        #print(x_not_in_y)
+        #print(y_not_in_x)
+        print("HAAAA")
+
+        display_marginals(X=x, Y=gt, 
+                          X_probs=gen_weights, 
+                          Y_probs=gt_probs,
+                          column_names=column_names,
+                          dataset_names=['Survey','Census'])
+        exit(1)
+        
+        
+        exit(1)
+        results_dict = {}
+        for i in range(x.shape[0]):
+            x_ind = tuple(x[i,:])
+            if x_ind not in results_dict:
+                results_dict[x_ind] = [gen_weights[i]]
+            else:
+                results_dict[x_ind].append(gen_weights[i])
+        
+        for k,v in results_dict.items():
+            if len(v) > 1:
+                print(v)
+
+def compute_marginals(data, probs=None):
+    """
+    data  : (N, D) numpy array of integer categorical variables
+    probs : (N,) optional probability weights
+
+    Returns:
+        list of dicts (length D), each dict maps category -> marginal probability
+    """
+    N, D = data.shape
+    marginals = []
+
+    if probs is None:
+        probs = np.ones(N) / N
+    else:
+        probs = np.asarray(probs, dtype=float)
+        probs = probs / probs.sum()
+
+    for j in range(D):
+        col = data[:, j]
+        categories = np.unique(col)
+        dist = {}
+
+        for c in categories:
+            mask = (col == c)
+            dist[int(c)] = float(probs[mask].sum())
+
+        marginals.append(dist)
+
+    return marginals
+
+
+def display_marginals(X, Y, X_probs=None, Y_probs=None,column_names=None,dataset_names=None):
+    """
+    Displays side-by-side marginal distributions for X and Y.
+    """
+    X_marginals = compute_marginals(X, probs=X_probs)
+    Y_marginals = compute_marginals(Y, probs=Y_probs)
+    X_original = compute_marginals(X, probs=None)
+
+    print()
+
+
+    D = X.shape[1]
+
+    for j in range(D):
+        print(f"\nVariable {column_names[j]}")
+        print("-" * 50)
+
+        all_cats = sorted(
+            set(X_marginals[j].keys()).union(Y_marginals[j].keys())
+        )
+
+        print(f"{'Category':>10} | {'Orig Survey':>15} |{dataset_names[0]:>15} | {dataset_names[1]:>15} | {'difference':>15}")
+        print("-" * 50)
+
+        for c in all_cats:
+            x_val = X_marginals[j].get(c, 0.0)
+            y_val = Y_marginals[j].get(c, 0.0)
+            x_val_orig = X_original[j].get(c, 0.0)
+            print(f"{c:>10} | {x_val_orig:>15.6f} | {x_val:>15.6f} | {y_val:>15.6f} | {x_val-y_val:>15.6f}")
+
+    return X_marginals, Y_marginals, X_original
+
+
+if __name__ == "__main__":
+    runs_path = "runs/"
+
+    if False: #analyzing target prediction runs aggregation
+        target_var_tb_name = "RECVDVACC prediction"
+        metric_tb_name = "jsd" #"Gen Entropy"
+
+        for i in ['2.5']:
+            indices = entropy_pred_relationship(runs_path,
+                                            filter_by=["Week=25", "lambdaJSD:"+i], 
+                                                num_runs=15,
+                                                target_var_name=target_var_tb_name,
+                                                metric_tb_name=metric_tb_name,
+                                                K=100)
+    
+    if True: #analyze post weighting
+        save_path = "./saves_week29/"
+        analayze_post_weighting(save_path)
+    

@@ -36,33 +36,34 @@ from attribution import *
 #runs_consistency_SameData_SameSeen_diffNetwork,Seed:359556
 DEBUG_MODE = False
 
-BATCH_SIZE = 2
-SUBSET_SIZE = 32
+BATCH_SIZE = 1
+SUBSET_SIZE = 128
 GENERATOR_TRAINING_FACTOR = 1
 DISCRIMINATOR_TRAINING_FACTOR = 8
 GT_LIMIT = 50000
-BIAS_LIMIT = 2500
+BIAS_LIMIT = 10000
 SAVE_DICT = {}
 SAVE_DICT['SAVE_IG'] = False
 SAVE_DICT['SAVE_DATASET'] = False
 SAVE_DICT['SAVE_WEIGHTS'] = False
 SAVE_DICT['SAVE_GENERATOR'] = False
 SAVE_DICT['SAVE_CRITIC'] = False
-SAVE_DICT['SAVE_EVERY'] = False #-1 means only save the last one
+SAVE_DICT['SAVE_EVERY'] = None #-1 means only save the last one
 
-KLIEP_DOWNSAMPLE = BIAS_LIMIT
+KLIEP_DOWNSAMPLE = -1 #BIAS_LIMIT
 LAMBDAGP = 10 #hold this at 10. higher = less discriminator expressability
-LAMBDAW = 0 #.003 #0.00075 #.00075 for 10k .006 for 2.5k
-LAMBDAD = 15 #13.5
+LAMBDAW = 0.4 #.00001 #.003 #0.00075 #.00075 for 10k .006 for 2.5k
+LAMBDAD = 25 #15 #13.5
+LAMBDAJSD = 2.5 #1 #2.5
 LAMBDA_FIRST_LAYER = 0
 GENERATOR_LEARNING_RATE = 1e-5 #2e-3 or 1e-5
 DISCRIMINATOR_LEARNING_RATE = 5e-5 #1e-3 or 5e-5
 BATCHS_IN_EPOCH = 1
-EPOCHS = 300
+EPOCHS = 500
 NUM_TRIALS = 1
 GEN_HISTORY_LENGTH = 0
 WARMUP_EPOCHS = 0
-GEN_LAYERS = [1024, 1024, 1024] #[256 for _ in range(5)]
+GEN_LAYERS = [256, 256] #[256 for _ in range(5)]
 DISC_LAYERS = [256, 256]
 GEN_DROPOUT = 0.2
 DISC_DROPOUT = 0.2
@@ -99,16 +100,18 @@ to all rngs NUM_TRIALS times.
 
 
 '''
-fixed_seed = np.random.randint(1e6)
+
 all_rngs = []
-print('SETTING SEED: ', fixed_seed)
 for _ in range(NUM_TRIALS):
+    fixed_seed = np.random.randint(1e6)
+    print('SETTING SEED: ', fixed_seed)
     all_rngs.append(set_seed(fixed_seed,
                             device,
                         data_init=[SAME_DATA_GT, SAME_DATA_BIAS],
                         data_gen =SAME_DATA_SEEN,
                         network_init=SAME_NETWORK_INIT,))
 
+print(len(all_rngs))
 SAVE_EVERY = None
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -141,10 +144,12 @@ def check_identical_networks(gan1, gan2):
 #weeks = ['Syn']
 #weeks = ['ALL']
 #weeks = ['lucid']
-weeks = list(range(25,26)) #for testing on HHP
+#weeks = [np.random.randint(23,30)] #for testing on HHP
+#weeks = [22]
+#weeks = list(range(23,30))
 #weeks = [35, 37, 39, 40, 42, 43, 44, 45] #for axios ipsos
 #weeks = [20,21,22,23,24,25] #for d4p
-#weeks = [45]
+weeks = [29]
 if __name__ == "__main__":
     for w in weeks:
         #make a new runs folder
@@ -164,13 +169,14 @@ if __name__ == "__main__":
         #exp_vars['glearningrate'] = [5e-6]
         #exp_vars['gt_limit'] = [GT_LIMIT]
         #exp_vars['bias_limit'] = [2500]
-        #exp_vars['subset_size'] = [32,64,128,256]
+        #exp_vars['subset_size'] = [128]
         #exp_vars['gen_training_factor'] = [2]
         #exp_vars['batch_size'] = [1,2]
-        #exp_vars['lambdaw'] = [.0025, .005, .0075]
+        exp_vars['lambdaw'] = [0] #[.4]
         #exp_vars['tau'] = [0.05, 0.25, 0.55, 0.75, 0.95]
         #exp_vars['columns_to_keep'] = [('EDUC', 'INCTOT', 'AGE')] #['REGION', 'EDUC', 'INCTOT', 'SEX', 'MARST', 'FAMSIZE', 'RACE','AGE', 'BIDENPERC']
-        exp_vars['lambdad'] = [0,5,10,12.5,15,17.5,20]
+        #exp_vars['lambdad'] = [25]
+        #exp_vars['lambdaJSD'] = [5] #[1.75,2.5]
         #exp_vars['KLIEP_downsample'] = [5000]
         #exp_vars['lambda_first_layer'] = [0]
         #exp_vars['epochs'] = [1000]
@@ -221,6 +227,7 @@ if __name__ == "__main__":
                         "lambdagp": LAMBDAGP,
                         "lambdaw": LAMBDAW,
                         "lambdad": LAMBDAD,
+                        "lambdaJSD": LAMBDAJSD,
                         "tau": TEMPERATURE,
                         "gen_history_length": GEN_HISTORY_LENGTH,
                         "epochs": EPOCHS,
@@ -258,15 +265,16 @@ if __name__ == "__main__":
                                     gt_limit = GT_LIMIT,
                                     bias_limit = BIAS_LIMIT, 
                                     )
-                    d = HouseholdPulse_dataset(ground_truth_path='./data/HouseholdPulse_data/cleaned/ipums_cleaned_combined.csv',
-                                    bias_path = './data/HouseholdPulse_data/cleaned/pulse_week'+week+'_cleaned.csv',
+
+                    d = HouseholdPulse_dataset(ground_truth_path='./data/censusHouseholdPulse_data/cleaned/ipums_cleaned_combined.csv',
+                                    bias_path = './data/censusHouseholdPulse_data/cleaned/pulse_week'+week+'_cleaned.csv',
                                     rngs=rngs,
                                     label_information={'RECVDVACC':0}, #{'VAC':0, 'HLTHINS1':1, 'RECVDVACC},
                                     device=device,
                                     columns_to_keep = None,
                                     gt_limit = GT_LIMIT,
-                                    bias_limit = BIAS_LIMIT, 
-                                    )
+                                    bias_limit = BIAS_LIMIT,
+                    )
 
                     d = HouseholdPulse_synthetic(ground_truth_path='./data/censusHouseholdPulse_data/cleaned/ipums_cleaned.csv',
                                     bias_path = './data/censusHouseholdPulse_data/cleaned/pulse_week'+week+'_cleaned.csv',
@@ -290,7 +298,6 @@ if __name__ == "__main__":
                     #week='ALL'
                     
                     
-
                     d = HouseholdPulse_dataset(ground_truth_path='./data/censusHouseholdPulse_data/cleaned/ipums_cleaned_combined.csv',
                                     bias_path = './data/censusHouseholdPulse_data/cleaned/pulse_week'+week+'_cleaned.csv',
                                     rngs=rngs,
@@ -300,6 +307,7 @@ if __name__ == "__main__":
                                     gt_limit = GT_LIMIT,
                                     bias_limit = BIAS_LIMIT,
                     )
+                    
                     
                     #print("idealy 1k to 5k generator updates...")
                     #print("N Generator updates: ", (EPOCHS * GT_LIMIT) / (BATCH_SIZE * hparams['dtrainingfactor']))
@@ -318,6 +326,7 @@ if __name__ == "__main__":
                                 lambda_gp=hparams["lambdagp"],
                                 lambda_weights=hparams["lambdaw"],
                                 lambda_demo=hparams["lambdad"],
+                                lambda_JSD=hparams["lambdaJSD"],
                                 gen_history_length=hparams["gen_history_length"],
                                 temperature=hparams["tau"],
                                 warmup_length=hparams["wudur"],

@@ -32,6 +32,7 @@ class GAN():
                 lambda_gp,
                 lambda_weights,
                 lambda_demo,
+                lambda_JSD,
                 gen_history_length=10,
                 temperature=0.1,
                 warmup_length = 1000,
@@ -75,6 +76,7 @@ class GAN():
         self.lambda_gp = lambda_gp
         self.lambda_weights=lambda_weights
         self.lambda_demo = lambda_demo
+        self.lambda_jsd = lambda_JSD
         self.discriminator_starting_lr = disc_learning_rate
         self.generator_starting_lr = gen_learning_rate
         self.final_dataset_shape = dataset.biased_dataset.shape[2]
@@ -156,7 +158,10 @@ class GAN():
         self.gt_cpu = dataset.gt_cpu
         self.bias_cpu = dataset.bias_cpu
 
-        self.KLIEP_downsample=min(KLIEP_downsample,self.unscaled_biased.shape[0])
+        if KLIEP_downsample == -1:
+            self.KLIEP_downsample = -1
+        else:
+            self.KLIEP_downsample=min(KLIEP_downsample,self.unscaled_biased.shape[0])
 
         self.original_distribution = None
         if hasattr(dataset, "original_distribution"):
@@ -331,11 +336,12 @@ class GAN():
 
         return jsd / len(p_hists)
     
-    def get_JSD_loss(self):
-        print("Here")
-        assert 1 == 0
+    def get_JSD_loss(self,printt=False):
         jsd_total = 0.0
         weights = self.generator.get_weights_regularizer(self.bias_dataset).T.squeeze()
+        gt_weights = (self.gt_weights / (self.gt_weights.sum() + 1e-12)).to(self.device)
+        KLP_history = {}
+
         for i in range(self.unscaled_biased.shape[1]):
             # One-hot encode the i-th feature
             P = torch.nn.functional.one_hot(self.unscaled_biased[:, i].long(), num_classes=self.embedding_dict[i][1]).float()  # (N, num_classes)
@@ -343,7 +349,8 @@ class GAN():
 
             # Normalize to get empirical probability distributions
             P_dist = (weights[:, None] * P).sum(dim=0)          # (num_classes,)
-            Q_dist = Q.mean(dim=0)        # (num_classes,)
+            #Q_dist = Q.mean(dim=0)        # (num_classes,)
+            Q_dist = (gt_weights[:, None] * Q).sum(dim=0) 
 
             M_dist = 0.5 * (P_dist + Q_dist)
 
@@ -351,12 +358,15 @@ class GAN():
             eps = 1e-8
             kl_P = torch.sum(P_dist * torch.log((P_dist + eps) / (M_dist + eps)))
             kl_Q = torch.sum(Q_dist * torch.log((Q_dist + eps) / (M_dist + eps)))
-
+            KLP_history[i] = [P_dist.cpu(),Q_dist.cpu()]
             #scale by the dimensionality of the feature
-            jsd_total += 0.5 * (kl_P + kl_Q) * (1 / (np.sqrt(self.embedding_dict[i][2]) - 1))
+            jsd_total += (kl_P + kl_Q) * (1 / (np.sqrt(self.embedding_dict[i][2]) - 1))
 
-        jsd_avg = jsd_total / self.unscaled_biased.shape[1]
-        return jsd_avg
+        if printt:
+            print("weighted: ", KLP_history[0][0])
+            print("census: ", KLP_history[0][1])
+        #jsd_avg = jsd_total / self.unscaled_biased.shape[1]
+        return jsd_total
 
     def L_KLIEP(self, eps=1e-8):
         """
@@ -375,12 +385,13 @@ class GAN():
         Y_whole = self.unscaled_ground_truth
         K = self.KLIEP_downsample
         Y_probs = self.gt_weights / self.gt_weights.sum()
-
-        # Sample K rows from Y_whole according to Y_probs
-        indices = torch.multinomial(Y_probs, num_samples=K, replacement=True, generator=self.rngs['torch'])
-        Y = Y_whole[indices]
-        n, v = X.shape
-        m, _ = Y.shape
+        Y_probs = Y_probs.to(self.device)
+        if K == -1:
+            Y = Y_whole
+        else:
+            # Sample K rows from Y_whole according to Y_probs
+            indices = torch.multinomial(Y_probs, num_samples=K, replacement=True, generator=self.rngs['torch'])
+            Y = Y_whole[indices]
 
         # Compare each Y_j row with all X_i rows
         # indicator[i,j] = 1 if X[i] == Y[j] across all variables
@@ -389,12 +400,12 @@ class GAN():
         if False:
             #exact matching
             indicator = (Y.unsqueeze(1) == X.unsqueeze(0)).all(dim=2).float()  # shape (m, n)
-            #print(indicator.shape)
-            # Fraction of Y rows that have at least one matching X row
-            coverage_Y = (indicator.sum(dim=1) > 0).float().mean()
-            # Fraction of X rows that have at least one matching Y row
-            coverage_X = (indicator.sum(dim=0) > 0).float().mean()
             p_hat = torch.matmul(indicator, w)  # shape (m,)
+
+            # Fraction of Y rows that have at least one matching X row
+            #coverage_Y = (indicator.sum(dim=1) > 0).float().mean()
+            # Fraction of X rows that have at least one matching Y row
+            #coverage_X = (indicator.sum(dim=0) > 0).float().mean()
         else:
             #partial matching
             similarity = (Y.unsqueeze(1) == X.unsqueeze(0)).float().mean(dim=2)  # fraction of variables that match
@@ -404,8 +415,11 @@ class GAN():
         # Avoid log(0)
         p_hat = p_hat + eps
 
-        # KLIEP loss
-        loss = - torch.mean(torch.log(p_hat))
+        if K == -1:
+            loss = -(Y_probs * torch.log(p_hat)).sum()
+        else:
+            # KLIEP loss
+            loss = - torch.mean(torch.log(p_hat))
 
         return loss
 
@@ -708,12 +722,19 @@ class WGAN_GP(GAN):
 
             if epoch % 1 == 0:
                 with torch.no_grad():
+                    self.generator.set_eval()
                     #out = self.measure_intersection_recovery()
                     #writer.add_scalar('tvd', out, epoch)
 
-                    jsd_loss = self.L_KLIEP() #self.get_JSD_loss()
-                    writer.add_scalar('tvd', jsd_loss.item(), epoch)
+                    tvd_loss = self.L_KLIEP() #self.get_JSD_loss()
+                    writer.add_scalar('tvd', tvd_loss.item(), epoch)
                     
+                    if epoch % 100 == 0 or epoch+1 == epochs:
+                        jsd_loss = self.get_JSD_loss(printt=True)
+                    else:
+                        jsd_loss = self.get_JSD_loss(printt=False)
+                    writer.add_scalar('jsd', jsd_loss.item(), epoch)
+
                     #probs = self.generator.get_weights(self.bias_dataset).flatten()
                     #print(sum(probs[self.synthetic_label_1]),sum(probs[self.synthetic_label_2]))
                     #pred = self.measure_vaccine_batch()
@@ -889,19 +910,23 @@ class WGAN_GP(GAN):
         weights = torch.nn.functional.softmax(logits0.flatten(),dim=0)
         spread_loss = 0
         demo_loss = 0
+        demo_loss2 = 0
         first_l1 = 0
         if self.lambda_weights > 0:
             spread_loss = self.get_reg_loss() #self.get_medium_entropy_loss()
         if self.lambda_demo > 0:
             demo_loss = self.L_KLIEP() #self.get_JSD_loss()
+        if self.lambda_jsd > 0:
+            demo_loss2 = self.get_JSD_loss()
         #if self.lambda_first_layer > 0:
         #    first_l1 = self.first_layer_sparse_loss()
         if True:
             generator_loss = bias_loss \
                             + self.lambda_weights * spread_loss \
-                            + self.lambda_demo * demo_loss 
+                            + self.lambda_demo * demo_loss \
+                            + self.lambda_jsd * demo_loss2
         else:
-            generator_loss = self.lambda_demo * demo_loss
+            generator_loss = bias_loss #+ self.lambda_demo * demo_loss
         #print(self.lambda_first_layer * first_l1)
         #print("values below T=0.1", (self.generator.phi[0].weight < 0.1).sum().item())
         #print(bias_loss.item(), self.lambda_demo * demo_loss)
