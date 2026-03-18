@@ -854,10 +854,12 @@ class WGAN_GP(GAN):
         spread_loss = 0
         demo_loss = 0
         first_l1 = 0
+        jsd_loss = 0
         if self.lambda_weights > 0:
             spread_loss = self.get_reg_loss() #self.get_medium_entropy_loss()
         if self.lambda_demo > 0:
-            demo_loss = self.L_KLIEP() + 10*self.get_JSD_loss()
+            demo_loss = self.L_KLIEP() + self.get_JSD_loss()
+            jsd_loss = self.get_JSD_loss()
             #demo_loss = self.get_JSD_loss()
             #demo_loss = self.L_KLIEP()
         #if self.lambda_first_layer > 0:

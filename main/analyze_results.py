@@ -45,10 +45,12 @@ def load_runs_as_numpy(runs_path, var_names, filter_by, num_runs=20):
             cur_pred = []
             for event in prediction_events:
                 cur_pred.append(event.value)
+            #print(event_file, len(cur_pred))
             all_data[vname].append(cur_pred)
     
     for vname in all_data:
         all_data[vname] = np.array(all_data[vname])
+        print(vname, [len(sublist) for sublist in all_data[vname]])
     return all_data, event_files
 
 
