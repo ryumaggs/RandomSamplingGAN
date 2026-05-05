@@ -5,6 +5,7 @@ This repository contains a novel solution to the problem of survey reweighting: 
 
 The solution is an adaptation of Wasserstein Generative Adversarial Networks (WGANs). We adapt a WGAN generator to produce a weight distribution over a survey rather than synthesize new data. 
 
+![Alt text](./images/RWGANDiagram.png)
 
 ## Table of Contents
 
