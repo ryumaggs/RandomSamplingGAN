@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch.nn.utils import spectral_norm
 import sys, os
-from ComplexNet import *
+from experimental_features.ComplexNet import *
 sys.path.append(os.path.dirname(__file__))
 from util import warmup_spectral_norm, create_embedding_layers, embed_data
 

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import sys, os
-from ComplexNet import *
+from experimental_features.ComplexNet import *
 sys.path.append(os.path.dirname(__file__))
 
 from util import embed_data, create_embedding_layers
@@ -157,20 +157,39 @@ class dataGen(nn.Module):
         return output
     
 class weightsGen(torch.nn.Module):
-    def __init__(self,seed,num_data_points,sample_size,):
+    def __init__(self,survey_dataset,
+                 sample_size,):
         super().__init__()
+        num_data_points = survey_dataset.shape[1]
         self.sample_size=sample_size
-        self.weights = nn.Parameter(torch.rand((1, num_data_points), requires_grad=True))
+        self.weights = nn.Parameter(torch.randn(1, num_data_points),requires_grad=True)
     def forward(self, tensor_dataset):
         softmaxed_weights = torch.nn.functional.log_softmax(self.weights,dim=1)
         indexes = F.gumbel_softmax(softmaxed_weights.repeat(self.sample_size,1),
                                    tau=0.1,hard=False)
-        return indexes @ tensor_dataset, None
+        return indexes @ tensor_dataset, None, self.weights.detach().cpu()
     
-    def get_weights(self, dummy_input):
+    def get_weights_regularizer(self, dummy_input=None):
+        return torch.nn.functional.softmax(self.weights,dim=1).unsqueeze(0)
+
+    def get_weights(self, dummy_input=None):
         with torch.no_grad():
-            return torch.nn.functional.softmax(self.weights,dim=1).detach().cpu().numpy()
+            return torch.nn.functional.softmax(self.weights,dim=1).cpu().squeeze(0).numpy().T
         
+    def get_logits(self, dummy_input=None):
+        return self.weights.detach().cpu().numpy()
+
+    def set_eval(self):
+        pass
+    
+    def set_train(self):
+        pass
+    
+    def update_temperature(self, dummy_input):
+        pass
+
+
+    
 class DeepSetNet(nn.Module):
     def __init__(self,
                  rngs, 
