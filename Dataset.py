@@ -6,10 +6,8 @@ from scipy.special import softmax
 import pandas as pd
 import torch
 from util import dict2vector, normalize_to_minus1_plus1, embed_data
-from DataProcessing import *
-from sklearn.preprocessing import StandardScaler
-from HouseholdCensusDataProcessing import *
-from matplotlib import pyplot as plt
+from data_processing.DataProcessing import *
+from data_processing.HouseholdCensusDataProcessing import *
 
 class XBoxDatasetSimulation():
     def __init__(self,
@@ -770,3 +768,40 @@ class DataSet():
             batch.append(self.groundtruth_data[groundtruth_indexes].flatten())
         batch = np.stack(batch)
         return batch
+    
+CLASS_REGISTRY = {
+    'Axios_ipsosdataset': Axios_ipsosdataset,
+    'D4P_dataset': D4P_dataset,
+    'HouseholdPulse_dataset': HouseholdPulse_dataset,
+    'HouseholdPulse_synthetic': HouseholdPulse_synthetic,
+}
+
+def build_dataset(cfg, 
+                  data_cfg,
+                  rngs,
+                  week, 
+                  device,):
+    dataset_name = cfg['data']['dataset_name']
+    dcfg = data_cfg[dataset_name]
+    cls = CLASS_REGISTRY[dcfg['cls']]
+    multiplier = 1 #len(rngs) if dcfg.get('gt_limit_multiplier') else 1
+    gt_limit = cfg['data']['gt_limit']
+    bias_limit = cfg['data']['bias_limit']
+    valid_weeks = dcfg['valid_weeks']
+    
+    if len(valid_weeks) > 0:
+        assert week in valid_weeks, "Error: [week] provided to Dataset.build_dataset is not within the valid_weeks of all_datasets.yaml for this particular data set"
+    
+    kwargs = dict(
+        ground_truth_path=dcfg['ground_truth_path'],
+        bias_path=dcfg['survey_path'].format(week=week),
+        rngs=rngs,
+        device=device,
+        gt_limit=gt_limit * multiplier,
+        bias_limit=bias_limit,
+    )
+
+    if dataset_name != 'household_pulse_synthetic':
+        kwargs.update(label_information={'RECVDVACC': 0}, columns_to_keep=None)
+
+    return cls(**kwargs)
