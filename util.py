@@ -4,6 +4,82 @@ import random
 import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
+import yaml
+import itertools
+
+def load_config(path=None):
+    """Load a YAML config. Falls back to default_config.yaml if no path given."""
+    with open(path, "r") as f:
+        return yaml.safe_load(f)
+    
+def build_rngs(rng_cfg: dict, device):
+    """
+    Build the rngs dict from the 'rng' block of a config.
+
+    Modes
+    -----
+    fully_random  — all sources randomised, seed ignored
+    fix_data      — same data each run, network re-randomised
+    fix_network   — same network init, data randomised
+    fully_fixed   — everything fixed
+    """
+    mode = rng_cfg.get("mode", "fully_random")
+    seed = rng_cfg.get("seed") or int(np.random.randint(1e6))
+
+    if mode == "fully_random":
+        seed = int(np.random.randint(1e6))
+        return set_seed(seed, device,
+                        data_init=[False, False],
+                        data_gen=False,
+                        network_init=False)
+    elif mode == "fix_data":
+        return set_seed(seed, device,
+                        data_init=[True, True],
+                        data_gen=True,
+                        network_init=False)
+    elif mode == "fix_network":
+        return set_seed(seed, device,
+                        data_init=[False, False],
+                        data_gen=False,
+                        network_init=True)
+    elif mode == "fully_fixed":
+        return set_seed(seed, device,
+                        data_init=[True, True],
+                        data_gen=True,
+                        network_init=True)
+    else:
+        raise ValueError(f"Unknown rng mode: '{mode}'")
+
+def cartesian_product_hyperparams(experimental_hparams_dict, product=False):
+    print(experimental_hparams_dict)
+    if not product:
+        combinations = [
+            {key: val}
+            for key, vals in experimental_hparams_dict.items()
+            for val in vals
+        ]
+        
+    else:
+        keys = list(experimental_hparams_dict.keys())
+        values = list(experimental_hparams_dict.values())
+
+        combinations = [
+            dict(zip(keys, combo))
+            for combo in itertools.product(*values)
+        ]
+    return combinations
+
+def check_identical_networks(gan1, gan2):
+    '''
+    used to debug reproducibility code.
+    ensures that two deepset nets are equivalent upon initialization
+    '''
+    if gan1 is None or gan2 is None:
+        return
+    print("Generator rhos: ", all(torch.equal(p1, p2) for p1, p2 in zip(gan1.generator.rho.parameters(), gan2.generator.rho.parameters())))
+    print("Generator phis: ", all(torch.equal(p1, p2) for p1, p2 in zip(gan1.generator.phi.parameters(), gan2.generator.phi.parameters())))
+    print("Discriminator rhos: ", all(torch.equal(p1, p2) for p1, p2 in zip(gan1.discriminator.rho.parameters(), gan2.discriminator.rho.parameters())))
+    print("Discriminator phis: ", all(torch.equal(p1, p2) for p1, p2 in zip(gan1.discriminator.phi.parameters(), gan2.discriminator.phi.parameters())))
 
 def rename_check(df, old_name, new_name=None):
     if new_name is not None:
