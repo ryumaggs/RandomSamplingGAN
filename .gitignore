@@ -5,9 +5,12 @@ saves/
 saves_to_share/
 UncheckedRuns/
 saves_history/
+autotune_history/
+experimental_features/
 runs/
 runs*/
 saved*/
 saves*/
+notebook.ipynb
 *.pth
 *.pikl
