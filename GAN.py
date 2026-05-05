@@ -14,7 +14,7 @@ from scipy.spatial.distance import jensenshannon
 import copy
 import pandas as pd
 import pickle
-from attribution import *
+from attribution.attribution import *
 
 class GAN():
     def __init__(self,
@@ -52,6 +52,7 @@ class GAN():
                  output_size,
                  device
         '''
+        self.entropy_history = []
         self.embedding_dict = dataset.embedding_dict
         self.lambda_first_layer = lambda_first_layer
         self.input_grad_history = []
@@ -107,8 +108,12 @@ class GAN():
                                      batch_size = batch_size,
                                      temperature=temperature,
                                      embedding_dict=self.embedding_dict).to(self.device)
+        elif generator_type == 'weights':
+            self.generator = weightsGen(survey_dataset=dataset.biased_dataset,
+                                        sample_size=bias_sample_size,).to(self.device)
         else:
             raise NotImplementedError
+    
         self.generator_config = {
                                     "rng_seed": 0,
                                     "num_features": self.final_dataset_shape,
@@ -639,6 +644,9 @@ class GAN():
             #        w=np.array(self.input_grad_history), wc=np.array(self.critic_input_grad_history))
             np.savez("./"+self.save_dir+"/weights_"+str(epoch)+".npz", 
                     w=np.array(weights))
+        
+        with open('./'+self.save_dir+'/entropy_history.pikl','wb') as file:
+            pickle.dump(self.entropy_history, file)
                     
 class WGAN_GP(GAN):
 
@@ -654,15 +662,76 @@ class WGAN_GP(GAN):
             saved_demos.append(out)
         return saved_demos
 
+    def autotune_train(self,
+                        epochs,
+                        gen_training_factor,
+                        disc_training_factor,
+                        writer,):
+        '''
+        Autotuner needs output:
+            jsd_history : list[float]
+            The jsd metric recorded at each step/epoch during training.
+            Used by the tuner to assess convergence.
+
+        kleip_history: list[float]
+            The KLIEP metric recorded at each step/epoch during training.
+            Used by the tuner to assess convergence.
+        '''
+
+        jsd_history = []
+        kliep_history = []
+
+        for epoch in tqdm(range(epochs)):              
+            if epoch % 1 == 0:
+                with torch.no_grad():
+                    #obtain diagnostic information
+                    self.generator.set_eval()
+                    tvd_loss = self.L_KLIEP() #self.get_JSD_loss()
+                    jsd_loss = self.get_JSD_loss(printt=False)
+                    pred, _ = self.measure_vaccine()
+                    entropy = self.measure_entropy()
+                    reg_loss = self.get_reg_loss()
+
+                    #write to tensorbaord
+                    writer.add_scalar('tvd', tvd_loss.item(), epoch)
+                    writer.add_scalar('jsd', jsd_loss.item(), epoch)
+                    for pi in range(pred.shape[1]):
+                        writer.add_scalar(str(self.label_names[pi]) + ' prediction', pred[0,pi], epoch)
+                    writer.add_scalar('Gen Entropy', entropy, epoch)
+                    writer.add_scalar('weights^2 loss', self.lambda_weights*reg_loss, epoch)
+
+                    #append to return lists
+                    kliep_history.append(tvd_loss.item())
+                    jsd_history.append(jsd_loss.item())
+
+            generator_losses_1ep, generator_spread_reg_1ep, discriminator_loss_1ep, tf_scores_1ep, gps, gt_scores, bias_scores, all_gp_grads, all_gen_grads, weights = self.onestep_train(generator_training_factor=gen_training_factor, 
+                                                                                                                          discriminator_training_factor=disc_training_factor,
+                                                                                                                          epoch=epoch,
+                                                                                                                          total_epoch = epochs)
+
+
+
+            writer.add_scalar('GenLoss', sum(generator_losses_1ep)/(len(generator_losses_1ep)+1e-6), epoch)
+            writer.add_scalar('Spread Regularizer', sum(generator_spread_reg_1ep)/(len(generator_spread_reg_1ep)+1e-6), epoch)
+
+            if len( tf_scores_1ep) > 0:
+                writer.add_scalar('Truth - Fake scores', tf_scores_1ep[-1], epoch)
+
+                writer.add_scalar('Disc Loss', discriminator_loss_1ep[-1],epoch)
+                writer.add_scalar('GT score', sum(gt_scores)/(len(gt_scores)+1e-6),epoch)
+                writer.add_scalar('Gradient Penalty', gps[-1], epoch)
+                
+                writer.add_scalar('Avg Gen Grad', sum(all_gen_grads)/(len(all_gen_grads)+1e-6),epoch)
+                writer.add_scalar('All gp grads', all_gp_grads[-1],epoch)
+            writer.add_scalar('Bias score', sum(bias_scores)/(len(bias_scores)+1e-6),epoch)
+
+        return jsd_history, kliep_history
+
+    
     def train(self,
-              batchs_in_epoch,
               epochs,
-              warmup_epochs,
-              temperature_start,
-              temperature_end,
               gen_training_factor,
               disc_training_factor,
-              save_every,
               writer,
               trial_id,
               synthetic,
@@ -681,45 +750,16 @@ class WGAN_GP(GAN):
             gamma = np.exp(np.log(self.discriminator.min_lr / self.discriminator_starting_lr) / reach_min_epoch)
             self.discriminator_lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.discriminator_optimizer, gamma=gamma)
         
-        #print(['REGION', 'EDUC', 'INCTOT', 'SEX', 'MARST', 'RACE', 'AGE'])
-        #print(np.mean(self.unscaled_ground_truth,axis=0) - np.mean(self.unscaled_biased,axis=0))
-        #print("")
-        #return None, None, None, None, None, None, None
         prob_diffs = []
         generator_losses, discriminator_losses = [], []
         test_probs = []
         test_prob_diffs = []
         temp_disc_training_factor = disc_training_factor
         temp_gen_training_factor = gen_training_factor
-        lambda_max = 250
-        lambda_min = 50
-        #_, _, oweights = self.generator.forward(self.bias_dataset)
-        #oweights = torch.nn.functional.softmax(oweights,dim=0).to(self.device)
-        if False: #warmup code
-            oweights=None
-            for epoch in tqdm(range(warmup_epochs)):
-                discriminator_loss, tf_score, gp, gt_score, bias_score, unique_count = self.train_discriminator(epoch,
-                                                                                                                override_weights=oweights)
-                writer.add_scalar('Warmup disc loss', discriminator_loss, epoch)
-                self.discriminator_lr_scheduler.step()
-                self.compute_input_gradient_disc()
-
-            if False and self.save_weights:
-                np.savez("./"+self.save_dir+"/grad_history_"+str(trial_id)+"_"+str(synthetic_col_names)+".npz", 
-                        w=np.array(self.input_grad_history), wc=np.array(self.critic_input_grad_history))
-                with open("./"+self.save_dir+"/embedding_dict_"+str(trial_id)+"_"+str(synthetic_col_names)+".pikl",'wb') as file:
-                    pickle.dump(self.embedding_dict, file)
-        #return None, None, None, None, None, None, None
+        self.entropy_history = [] #reset entropy history
     
         weight_history = []
         for epoch in tqdm(range(epochs)):
-            #new_temp = self.get_temperature(epoch, epochs)
-            #self.generator.update_temperature(new_temp)
-            #self.generator.update_temperature(0.25)
-
-            #lambda_w = max(lambda_min, lambda_max * (1 - epoch / epochs))
-            #self.lambda_weights = lambda_w                    
-
             if epoch % 1 == 0:
                 with torch.no_grad():
                     self.generator.set_eval()
@@ -742,11 +782,15 @@ class WGAN_GP(GAN):
                     if not synthetic:
                         pred, _ = self.measure_vaccine()
                         #weight_history.append(weights.flatten())
+                        if len(pred.shape) == 1:
+                            pred = np.expand_dims(pred,0)
                         for pi in range(pred.shape[1]):
                             writer.add_scalar(str(self.label_names[pi]) + ' prediction', pred[0,pi], epoch)
                         entropy = self.measure_entropy()
                         writer.add_scalar('Gen Entropy', entropy, epoch)
+                        self.entropy_history.append(entropy)
                         reg_loss = self.get_reg_loss()
+                        
                         writer.add_scalar('weights^2 loss', self.lambda_weights*reg_loss, epoch)
                         #sparse_loss = self.first_layer_sparse_loss()
                         #writer.add_scalar('first  layer sparse loss', sparse_loss.item(), epoch)
@@ -791,7 +835,9 @@ class WGAN_GP(GAN):
             #writer.add_scalar('Disc Learning rate', self.discriminator_optimizer.param_groups[0]['lr'],epoch)
             #writer.add_scalar('Unique Counts', sum(unique_counts)/len(unique_counts), epoch)
             if self.save_dict['SAVE_EVERY']:
-                if self.save_dict['SAVE_EVERY'] != -1 and epoch % self.save_dict['SAVE_EVERY'] == 0:
+                if (self.save_dict['SAVE_EVERY'] != -1 
+                    and epoch % self.save_dict['SAVE_EVERY'] == 0  
+                    and epoch >= 300):
                     self.save(epoch=epoch)
 
         if any(self.save_dict.values()):
@@ -926,7 +972,7 @@ class WGAN_GP(GAN):
                             + self.lambda_demo * demo_loss \
                             + self.lambda_jsd * demo_loss2
         else:
-            generator_loss = bias_loss #+ self.lambda_demo * demo_loss
+            generator_loss = self.lambda_jsd * demo_loss2 #+ self.lambda_demo * demo_loss
         #print(self.lambda_first_layer * first_l1)
         #print("values below T=0.1", (self.generator.phi[0].weight < 0.1).sum().item())
         #print(bias_loss.item(), self.lambda_demo * demo_loss)
