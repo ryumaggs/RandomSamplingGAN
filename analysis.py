@@ -13,6 +13,7 @@ from scipy.ndimage import uniform_filter1d
 from tqdm import tqdm
 import pickle
 import torch
+import re
 
 def plot_2d_runs(data):
     # Compute mean and standard deviation across experiments
@@ -883,7 +884,6 @@ def compute_marginals(data, probs=None):
 
     return marginals
 
-
 def display_marginals(X, Y, X_probs=None, Y_probs=None,column_names=None,dataset_names=None):
     """
     Displays side-by-side marginal distributions for X and Y.
@@ -916,6 +916,197 @@ def display_marginals(X, Y, X_probs=None, Y_probs=None,column_names=None,dataset
 
     return X_marginals, Y_marginals, X_original
 
+def diagnostic_heatmap(runs_dir, target_var_names, diag_var_names, 
+                       target_values, interactable=False,
+                       filter_by=['lambdaw=0.0']):
+    """
+    For each tensorboard run in runs_dir, loads target and diagnostic variables
+    and produces a 1D/2D/3D heatmap showing how close the target was to its
+    benchmark value across combinations of diagnostic variable values.
+
+    Parameters
+    ----------
+    runs_dir        : str         - path containing tensorboard run subdirectories
+    target_var_names: list[str]   - tensorboard scalar names to treat as targets
+    diag_var_names  : list[str]   - 1-3 diagnostic variable names (axes of the plot)
+    target_values   : list[float] - benchmark value for each target variable (same order)
+    """
+    import re
+    assert 1 <= len(diag_var_names) <= 3, "diag_var_names must have 1–3 entries"
+    assert len(target_var_names) == len(target_values), "target_var_names and target_values must match in length"
+
+    # ── 1. Load all runs ──────────────────────────────────────────────────────
+    all_points = []   # list of dicts: {diag0: v, diag1: v, diag2: v, 'error': e}
+    tfevents_re = re.compile(r'events\.out\.tfevents\.')
+
+    for run_name in os.listdir(runs_dir):
+        if filter_by[0] not in run_name:
+            continue
+        run_path = os.path.join(runs_dir, run_name)
+        if not os.path.isdir(run_path):
+            continue
+
+        # find the tfevents file
+        event_file = None
+        for fname in os.listdir(run_path):
+            if tfevents_re.match(fname):
+                event_file = os.path.join(run_path, fname)
+                break
+        if event_file is None:
+            continue
+
+        ea = event_accumulator.EventAccumulator(event_file)
+        ea.Reload()
+        available = ea.Tags().get('scalars', [])
+
+        # skip runs missing any required variable
+        required = target_var_names + diag_var_names
+        if not all(v in available for v in required):
+            continue
+
+        # load all variables as step→value dicts
+        def to_dict(name):
+            return {e.step: e.value for e in ea.Scalars(name)}
+
+        diag_dicts   = [to_dict(n) for n in diag_var_names]
+        target_dicts = [to_dict(n) for n in target_var_names]
+
+        # find steps present in ALL variables
+        common_steps = set(diag_dicts[0].keys())
+        for d in diag_dicts[1:] + target_dicts:
+            common_steps &= set(d.keys())
+
+        for step in common_steps:
+            # mean absolute error across all target variables
+            error = np.mean([abs(td[step] - tv) for td, tv in zip(target_dicts, target_values)])
+            point = {'error': error}
+            for i, dd in enumerate(diag_dicts):
+                point[i] = dd[step]
+            all_points.append(point)
+
+    if not all_points:
+        print("No data found.")
+        return
+
+    errors = np.array([p['error'] for p in all_points])
+    diag_vals = [np.array([p[i] for p in all_points]) for i in range(len(diag_var_names))]
+
+    # ── 2. Plot ───────────────────────────────────────────────────────────────
+    ndim = len(diag_var_names)
+    cmap = 'RdYlGn_r'   # green = close to target, red = far
+
+    if ndim == 1:
+        fig, ax = plt.subplots(figsize=(8, 5))
+        sc = ax.scatter(diag_vals[0], errors, c=errors, cmap=cmap, alpha=0.6, s=10)
+        ax.set_xlabel(diag_var_names[0])
+        ax.set_ylabel('|target - benchmark|')
+        plt.colorbar(sc, ax=ax, label='error')
+        ax.set_title('Target error vs ' + diag_var_names[0])
+
+    elif ndim == 2:
+        fig, ax = plt.subplots(figsize=(8, 6))
+        sc = ax.scatter(diag_vals[0], diag_vals[1], c=errors, cmap=cmap, alpha=0.6, s=10)
+        ax.set_xlabel(diag_var_names[0])
+        ax.set_ylabel(diag_var_names[1])
+        plt.colorbar(sc, ax=ax, label='|target - benchmark|')
+        ax.set_title('Target error heatmap')
+
+    else:  # ndim == 3
+        fig = plt.figure(figsize=(10, 7))
+        ax = fig.add_subplot(111, projection='3d')
+        sc = ax.scatter(diag_vals[0], diag_vals[1], diag_vals[2],
+                        c=errors, cmap=cmap, alpha=0.6, s=10)
+        ax.set_xlabel(diag_var_names[0])
+        ax.set_ylabel(diag_var_names[1])
+        ax.set_zlabel(diag_var_names[2])
+        fig.colorbar(sc, ax=ax, label='|target - benchmark|', shrink=0.5)
+        ax.set_title('Target error heatmap (3D)')
+
+    if interactable:
+        import plotly.graph_objects as go
+        target_str = ', '.join(f'{n}={v}' for n, v in zip(target_var_names, target_values))
+        marker = dict(color=errors, colorscale='RdYlGn_r', size=3, showscale=True,
+                      colorbar=dict(title='|target - benchmark|'))
+        if ndim == 1:
+            trace = go.Scatter(x=diag_vals[0], y=errors, mode='markers', marker=marker)
+            layout = go.Layout(xaxis_title=diag_var_names[0], yaxis_title='|target - benchmark|',
+                               title=f'Benchmarks: {target_str}')
+            go.Figure(data=[trace], layout=layout).show()
+        elif ndim == 2:
+            trace = go.Scatter(x=diag_vals[0], y=diag_vals[1], mode='markers', marker=marker)
+            layout = go.Layout(xaxis_title=diag_var_names[0], yaxis_title=diag_var_names[1],
+                               title=f'Benchmarks: {target_str}')
+            go.Figure(data=[trace], layout=layout).show()
+        else:
+            trace = go.Scatter3d(x=diag_vals[0], y=diag_vals[1], z=diag_vals[2],
+                                 mode='markers', marker=marker)
+            layout = go.Layout(scene=dict(xaxis_title=diag_var_names[0],
+                                          yaxis_title=diag_var_names[1],
+                                          zaxis_title=diag_var_names[2]),
+                               title=f'Benchmarks: {target_str}')
+            go.Figure(data=[trace], layout=layout).show()
+    else:
+        target_str = ', '.join(f'{n}={v}' for n, v in zip(target_var_names, target_values))
+        fig.suptitle(f'Benchmarks: {target_str}', fontsize=9)
+        plt.tight_layout()
+        plt.savefig('./testheatmap.png')
+
+def load_autotune_dir(autotune_dir):
+    """
+    For each week subdirectory in autotune_dir, load all TensorBoard runs
+    under <subdir>/runs/ and return their scalar traces.
+
+    Returns
+    -------
+    results : dict
+        { week_str: { var_name: list[list[float]] } }
+        Each inner list is one run; each run is a list of scalar values in step order.
+    """
+    var_names = ["tvd", "jsd", "RECVDVACC prediction", "Gen Entropy", "Truth-Fake scores"]
+    tfevents_re = re.compile(r'events\.out\.tfevents\.')
+    week_re = re.compile(r'week(\d+)')
+
+    results = {}
+
+    for subdir in sorted(os.listdir(autotune_dir)):
+        m = week_re.search(subdir)
+        if m is None:
+            continue
+        week = m.group(1)
+        runs_path = os.path.join(autotune_dir, subdir, "runs")
+        if not os.path.isdir(runs_path):
+            continue
+
+        week_data = {v: [] for v in var_names}
+
+        for run_name in sorted(os.listdir(runs_path)):
+            run_path = os.path.join(runs_path, run_name)
+            if not os.path.isdir(run_path):
+                continue
+
+            event_file = None
+            for fname in os.listdir(run_path):
+                if tfevents_re.match(fname):
+                    event_file = os.path.join(run_path, fname)
+                    break
+            if event_file is None:
+                continue
+
+            ea = event_accumulator.EventAccumulator(event_file)
+            ea.Reload()
+            available = ea.Tags().get("scalars", [])
+
+            for vname in var_names:
+                if vname not in available:
+                    week_data[vname].append([])
+                    continue
+                week_data[vname].append([e.value for e in ea.Scalars(vname)])
+
+        results[week] = {v: np.array(week_data[v]) for v in var_names}
+
+    return results
+
+
 
 if __name__ == "__main__":
     runs_path = "runs/"
@@ -931,8 +1122,15 @@ if __name__ == "__main__":
                                                 target_var_name=target_var_tb_name,
                                                 metric_tb_name=metric_tb_name,
                                                 K=100)
-    
-    if True: #analyze post weighting
+    elif False: #analyze post weighting
         save_path = "./saves_week29/"
         analayze_post_weighting(save_path)
     
+    elif False: #headmap manual run
+        diagnostic_heatmap(runs_dir = './runs/', 
+                           target_var_names=['RECVDVACC prediction'], 
+                           diag_var_names=['tvd','jsd','Gen Entropy'], 
+                           target_values=[0.6])
+    
+    elif True:
+        load_autotune_dir(autotune_dir="./autoTuneDir/")
