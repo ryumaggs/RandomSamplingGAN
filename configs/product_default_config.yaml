@@ -28,7 +28,7 @@ data:
   bias_limit: 10000
   label_information:
     RECVDVACC: 0
-  weeks: ['29']
+  weeks: ['29'] #must be a string within a list: list[str]
 
 # ── update params. these will override their existing value in 'hparams' below ───────────────────────────────────────────────────────────
 experimental_hparams:

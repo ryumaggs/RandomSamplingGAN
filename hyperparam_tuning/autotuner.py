@@ -17,13 +17,13 @@ import numpy as np
 import os
 import logging
 from datetime import datetime
-import run_experiment
+import hyperparam_tuning.run_experiment as run_experiment
 import copy
 import torch
 
-import Dataset
+import main.Dataset
 
-JSD_MAX = 0.07
+JSD_MAX = 0.075
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def final_quarter_mean(jsd_history):
@@ -229,7 +229,7 @@ def autotune(param_ranges, cfg, dataset, rngs,
             phase_3_temp_cfg['hparams']['lambdaJSD'] = best_p1
             phase_3_temp_cfg['hparams']['lambdad'] = best_p2
             phase_3_temp_cfg['hparams']['lambdaw'] = p3_val
-            jsd_history, kliep_history = run_experiment.run(cfg = phase_3_temp_cfg,
+            jsd_history, kliep_history, _ = run_experiment.run(cfg = phase_3_temp_cfg,
                                         dataset = dataset,
                                         rngs = rngs,
                                         phase=3)
@@ -284,6 +284,7 @@ def analysis(param_dict, cfg,
     log = logging.getLogger("autotuner")
     log.info(f"=== Phase 4: analysis ===")
     log.info("Analyzing: " + str(param_dict))
+    all_target_history = []
     num_experiments = len(all_exp_rngs)
     analysis_temp_cfg = copy.deepcopy(cfg)
     for name, value in param_dict.items():
@@ -297,54 +298,67 @@ def analysis(param_dict, cfg,
                                 cfg['data']['weeks'][0], 
                                 device,)
 
-        _ = run_experiment.run(cfg = analysis_temp_cfg,
+        _, _, target_history = run_experiment.run(cfg = analysis_temp_cfg,
                                     dataset = d,
                                     rngs = rngs,
                                     phase=4)
 
-    
+        target_history = np.array(target_history)
+        print(target_history)
+        last_20_target = target_history[int(0.8*cfg['training']['epochs']):].mean(axis=0)  # shape (4,)
+        all_target_history.append(last_20_target)
+    log.info("All experiment results raw: " + str(all_target_history))
+    log.info("Average prediction: " + str(np.mean(all_target_history)))
 
 
-if __name__ == "__main__":
-    from run_experiment import load_config
-    from Dataset import D4P_dataset, HouseholdPulse_dataset
+def notebook_tune_script():
+    import sys
+    from pathlib import Path
+    import yaml
+    BASE_DIR = Path().resolve()
+    sys.path.insert(0, str(BASE_DIR))
 
-    for week in range(29,30):
-        w = str(week)
-        cfg = load_config(BASE_DIR / 'configs' / 'default_config.yaml')
-        data_cfg = load_config(BASE_DIR / 'configs' / 'all_datasets.yaml')
-        cfg['data']['weeks'] = [w]
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        rngs = run_experiment.build_rngs(cfg["rng"], device)
-        if True:
-            d = Dataset.build_dataset(cfg, 
-                                        data_cfg,
-                                        rngs,
-                                        w, 
-                                        device,)
+    from hyperparam_tuning.run_experiment import load_config, run, build_rngs
+    import hyperparam_tuning.autotuner as autotuner
+    from main.Dataset import build_dataset
 
-            #autotune(param_ranges, cfg, dataset, rngs)
-            tune_results = autotune({
-                'lambdaJSD': [10.0, 30, 2.0],
-                'lambdad':   [20.0, 50.0, 5.0],
-                'lambdaw': [0.0,2,0.2]
-            }, cfg, d, rngs,
-            skip_mode = False)
+    #set which configs to use
+    cfg = load_config(BASE_DIR / 'configs' / 'product_default_config.yaml')
+    data_cfg = load_config(BASE_DIR / 'configs' / 'all_datasets.yaml')
 
-            del d
-        else:
-            all_tuned_results = {
-                "22": {"lambdaJSD": 18.0, "lambdad": 45.0, "lambdaw": 0.0},
-                "23": {"lambdaJSD": 20.0, "lambdad": 50.0, "lambdaw": 0.0},
-                "24": {"lambdaJSD": 18.0, "lambdad": 50.0, "lambdaw": 0.0},
-                "25": {"lambdaJSD": 20.0, "lambdad": 45.0, "lambdaw": 0.0},
-                "26": {"lambdaJSD": 18.0, "lambdad": 45.0, "lambdaw": 0.0},
-                "27": {"lambdaJSD": 18.0, "lambdad": 40.0, "lambdaw": 0.0},
-                "28": {"lambdaJSD": 20.0, "lambdad": 50.0, "lambdaw": 0.0},
-                "29": {"lambdaJSD": 18.0, "lambdad": 40.0, "lambdaw": 0.0},
-            }
-            tune_results = all_tuned_results[w]
-        #analysis
-        num_experiments = 15
-        analysis_rngs = [run_experiment.build_rngs(cfg["rng"], device) for _ in range(num_experiments)]
-        analysis(tune_results, cfg, data_cfg, analysis_rngs, device)
+    #variable set up
+    device = torch.device(cfg['device'] if torch.cuda.is_available() else "cpu")
+    rngs = build_rngs(cfg["rng"], device)
+    w = cfg['data']['weeks'][0]
+
+    print("Operating on: ", cfg['data']['dataset_name'], " | week: ", cfg['data']['weeks'])
+
+    #build data set object
+    d = build_dataset(cfg, 
+                    data_cfg,
+                    rngs,
+                    w, 
+                    device,)
+
+    #tune on data set object
+    #variable ranges are given as: [start, end, step]
+    tune_results = autotuner.autotune({
+        'lambdaJSD': [0, 50.0, 5.0],
+        'lambdad':   [0, 50.0, 5.0],
+        'lambdaw': [0.0,2,0.2]
+    }, cfg, d, rngs,
+    skip_mode = False,)
+
+    del d
+
+    new_cfg = copy.deepcopy(cfg)
+    for k, v in tune_results.items():
+        new_cfg['hparams'][k] = v
+    filename = f"tuned_config_{new_cfg['data']['dataset_name']}_week{new_cfg['data']['weeks'][0]}.yaml"
+    with open('./configs/'+filename, 'w') as f:
+        yaml.dump(new_cfg, f)
+
+    #analysis
+    num_analysis = 15
+    analysis_rngs = [build_rngs(cfg["rng"], device) for _ in range(num_analysis)]
+    autotuner.analysis(tune_results, cfg, data_cfg, analysis_rngs, device)

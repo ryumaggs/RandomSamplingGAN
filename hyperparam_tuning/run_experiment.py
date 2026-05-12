@@ -7,16 +7,15 @@ import sys
 from pathlib import Path
 
 
-from Dataset import D4P_dataset
-from GAN import WGAN_GP
-from util import set_seed
+from main.Dataset import D4P_dataset
+from main.GAN import WGAN_GP
+from main.util import set_seed
 
 def load_config(path=None):
     _DEFAULT_CONFIG_PATH = "./configs/default_config.yaml"
     """Load a YAML config. Falls back to default_config.yaml if no path given."""
     with open(path or _DEFAULT_CONFIG_PATH, "r") as f:
         return yaml.safe_load(f)
-
 
 def build_rngs(rng_cfg: dict, device):
     """
@@ -123,7 +122,7 @@ def run(cfg: dict,
     writer.add_text("hparams", hparam_str, global_step=0)
 
     # ── 4. Train ──────────────────────────────────────────────────────────────
-    jsd_history, kliep_history = gan.autotune_train(
+    jsd_history, kliep_history, target_history = gan.autotune_train(
             epochs = cfg['training']["epochs"],
             gen_training_factor = cfg['training']["gtrainingfactor"],
             disc_training_factor = cfg['training']["dtrainingfactor"],
@@ -133,4 +132,4 @@ def run(cfg: dict,
 
     writer.close()
 
-    return jsd_history, kliep_history
+    return jsd_history, kliep_history, target_history

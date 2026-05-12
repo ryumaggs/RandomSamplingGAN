@@ -1,12 +1,8 @@
+#global imports
 import torch
 import torch.nn as nn
 import numpy as np
 import random
-from Generator import onesGen, dataGen, weightsGen, DeepSetNet, DeepSetComplexNet
-from Discriminator import Discriminator, DeepSetCritic, DeepSetCriticComplex
-import sys, os
-sys.path.append(os.path.dirname(__file__))
-from util import dict2vector, get_avg_grad_per_layer, compute_data_shape, embed_data
 from tqdm import tqdm
 import pytorch_warmup as warmup
 import torch.autograd as autograd
@@ -14,7 +10,12 @@ from scipy.spatial.distance import jensenshannon
 import copy
 import pandas as pd
 import pickle
-from attribution.attribution import *
+
+#local imports
+from main.Generator import onesGen, dataGen, weightsGen, DeepSetNet
+from main.Discriminator import Discriminator, DeepSetCritic
+from main.util import dict2vector, get_avg_grad_per_layer
+
 
 class GAN():
     def __init__(self,
@@ -680,6 +681,7 @@ class WGAN_GP(GAN):
 
         jsd_history = []
         kliep_history = []
+        target_history = []
 
         for epoch in tqdm(range(epochs)):              
             if epoch % 1 == 0:
@@ -703,6 +705,7 @@ class WGAN_GP(GAN):
                     #append to return lists
                     kliep_history.append(tvd_loss.item())
                     jsd_history.append(jsd_loss.item())
+                    target_history.append(pred.item())
 
             generator_losses_1ep, generator_spread_reg_1ep, discriminator_loss_1ep, tf_scores_1ep, gps, gt_scores, bias_scores, all_gp_grads, all_gen_grads, weights = self.onestep_train(generator_training_factor=gen_training_factor, 
                                                                                                                           discriminator_training_factor=disc_training_factor,
@@ -725,7 +728,7 @@ class WGAN_GP(GAN):
                 writer.add_scalar('All gp grads', all_gp_grads[-1],epoch)
             writer.add_scalar('Bias score', sum(bias_scores)/(len(bias_scores)+1e-6),epoch)
 
-        return jsd_history, kliep_history
+        return jsd_history, kliep_history, target_history
 
     
     def train(self,
