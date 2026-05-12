@@ -18,5 +18,7 @@ runs/
 runs_*/
 saved*/
 saves*/
+hyperparam_tuning_old/
+experimental_features/
 *.pikl
 *.pth
