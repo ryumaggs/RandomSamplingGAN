@@ -5,7 +5,9 @@ saves/
 saves_to_share/
 UncheckedRuns/
 saves_history/
-autotune_history/
+hyperparam_tuning/autotune_history/
+hyperparam_tuning/autoTuneDir/
+hyperparam_tuning/runs/
 experimental_features/
 runs/
 runs*/
