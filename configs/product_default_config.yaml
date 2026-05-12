@@ -34,7 +34,7 @@ data:
 experimental_hparams:
   #lambdad: [10,20,30]
   #lambdaJSD: [20.0]
-  lambdaw: [0] #[3,4,5]
+  lambdaw: [0.0] #[3,4,5]
   
 cartesian_product: False #if false, each variable is tested in isolation
                           # if true, the cartesian product is taken in util.py
