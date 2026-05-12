@@ -361,4 +361,4 @@ def notebook_tune_script():
     #analysis
     num_analysis = 15
     analysis_rngs = [build_rngs(cfg["rng"], device) for _ in range(num_analysis)]
-    autotuner.analysis(tune_results, cfg, data_cfg, analysis_rngs, device)
+    autotuner.analysis(tune_results, new_cfg, data_cfg, analysis_rngs, device)
