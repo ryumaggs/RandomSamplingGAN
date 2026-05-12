@@ -3,15 +3,16 @@ import torch
 import yaml
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
+import sys
+from pathlib import Path
+
 
 from Dataset import D4P_dataset
 from GAN import WGAN_GP
 from util import set_seed
 
-_DEFAULT_CONFIG_PATH = "./configs/default_config.yaml"
-
-
 def load_config(path=None):
+    _DEFAULT_CONFIG_PATH = "./configs/default_config.yaml"
     """Load a YAML config. Falls back to default_config.yaml if no path given."""
     with open(path or _DEFAULT_CONFIG_PATH, "r") as f:
         return yaml.safe_load(f)
@@ -98,14 +99,14 @@ def run(cfg: dict,
         lambda_weights=hp["lambdaw"],
         lambda_demo=hp["lambdad"],
         lambda_JSD=hp["lambdaJSD"],
-        gen_history_length=hp["gen_history_length"],
+        gen_history_length=0,
         temperature=hp["tau"],
-        warmup_length=hp["wudur"],
+        warmup_length=0,
         lambda_regularizer=0,
-        lambda_first_layer=hp["lambda_first_layer"],
+        lambda_first_layer=0,
         generator_dropout=hp["generator_dropout"],
         discriminator_dropout=hp["discriminator_dropout"],
-        KLIEP_downsample=hp["KLIEP_downsample"],
+        KLIEP_downsample=-1,
         save_dict=cfg.get("save_dict", {}),
         save_dir=cfg.get("save_dir", ""),
     )
@@ -123,9 +124,9 @@ def run(cfg: dict,
 
     # ── 4. Train ──────────────────────────────────────────────────────────────
     jsd_history, kliep_history = gan.autotune_train(
-            epochs = hp["epochs"],
-            gen_training_factor = hp["gtrainingfactor"],
-            disc_training_factor = hp["dtrainingfactor"],
+            epochs = cfg['training']["epochs"],
+            gen_training_factor = cfg['training']["gtrainingfactor"],
+            disc_training_factor = cfg['training']["dtrainingfactor"],
             writer=writer,
         )
     

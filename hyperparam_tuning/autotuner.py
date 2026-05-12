@@ -8,6 +8,10 @@ Phase 1: Increase lambdaJSD until no further meaningful improvement
 Phase 2: With best lambdaJSD fixed, increase lambdaTVD until the
          settled jsd metric begins to degenerate (rise).
 """
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+BASE_DIR = Path(__file__).parent.parent
 
 import numpy as np
 import os
@@ -17,7 +21,9 @@ import run_experiment
 import copy
 import torch
 
+import Dataset
 
+JSD_MAX = 0.07
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def final_quarter_mean(jsd_history):
@@ -52,7 +58,7 @@ def phase1_should_stop(history):
     -------
     bool
     """
-    return history[-1] <= 0.05
+    return history[-1] <= JSD_MAX
 
 
 def phase2_should_stop(history, first_q_history_2, history_2):
@@ -65,7 +71,7 @@ def phase2_should_stop(history, first_q_history_2, history_2):
     -------
     bool
     """
-    if history[-1] > 0.05: #and first_q_history_2[-1] > history_2[-1]:
+    if history[-1] > JSD_MAX: #and first_q_history_2[-1] > history_2[-1]:
         return True, first_q_history_2[-1] > history_2[-1]
     else:
         return False, False
@@ -115,12 +121,12 @@ def autotune(param_ranges, cfg, dataset, rngs,
     (p3_name, (p3_init, p3_end, p3_step)) = param_ranges.items()
 
     # ── Directory setup ───────────────────────────────────────────────────────
-    base_dir = "./autoTuneDir"
+    base_dir = BASE_DIR / "hyperparam_tuning" / "autoTuneDir"
     os.makedirs(base_dir, exist_ok=True)
 
-    dataset_stem = os.path.splitext(os.path.basename(cfg["survey_path"]))[0]
+    dataset_stem = cfg['data']['dataset_name']
     run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + f"_{dataset_stem}"
-    run_dir  = os.path.join(base_dir, run_name)
+    run_dir = base_dir / run_name
     os.makedirs(run_dir, exist_ok=True)
 
     log = _setup_logger(run_dir)
@@ -265,7 +271,10 @@ def autotune(param_ranges, cfg, dataset, rngs,
 
     return {p1_name: best_p1, p2_name: best_p2, p3_name: best_p3}
 
-def analysis(param_dict, cfg, all_exp_rngs):
+def analysis(param_dict, cfg, 
+             data_cfg,
+             all_exp_rngs,
+             device):
     '''
     called after autotune to run num_experiments on the tuned parameters
     defined by param_dict
@@ -282,16 +291,11 @@ def analysis(param_dict, cfg, all_exp_rngs):
     
     for ne in range(num_experiments):
         rngs = all_exp_rngs[ne]
-        d = HouseholdPulse_dataset(
-            ground_truth_path=cfg["census_path"],
-            bias_path=cfg["survey_path"],
-            rngs=rngs,
-            label_information=cfg["label_information"],
-            device=device,
-            columns_to_keep=None,
-            gt_limit=cfg["gt_limit"],
-            bias_limit=cfg["bias_limit"],
-        )
+        d = Dataset.build_dataset(cfg, 
+                                data_cfg,
+                                rngs,
+                                cfg['data']['weeks'][0], 
+                                device,)
 
         _ = run_experiment.run(cfg = analysis_temp_cfg,
                                     dataset = d,
@@ -305,30 +309,19 @@ if __name__ == "__main__":
     from run_experiment import load_config
     from Dataset import D4P_dataset, HouseholdPulse_dataset
 
-    for week in range(22,30):
+    for week in range(29,30):
         w = str(week)
-        cfg = load_config()
-        #data 4 progress
-        #cfg["survey_path"] = "./data/progress_data/cleaned/d4p_week"+w+"_cleaned.csv"
-        #cfg["census_path"] = "./data/progress_data/cleaned/ipums_cleaned_combined.csv"
-        
-        #household pulse
-        cfg["survey_path"] = "./data/censusHouseholdPulse_data/cleaned/pulse_week"+w+"_cleaned.csv"
-        cfg["census_path"] = "./data/censusHouseholdPulse_data/cleaned/ipums_cleaned_combined.csv"
-        
+        cfg = load_config(BASE_DIR / 'configs' / 'default_config.yaml')
+        data_cfg = load_config(BASE_DIR / 'configs' / 'all_datasets.yaml')
+        cfg['data']['weeks'] = [w]
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         rngs = run_experiment.build_rngs(cfg["rng"], device)
         if True:
-            d = HouseholdPulse_dataset(
-                ground_truth_path=cfg["census_path"],
-                bias_path=cfg["survey_path"],
-                rngs=rngs,
-                label_information=cfg["label_information"],
-                device=device,
-                columns_to_keep=None,
-                gt_limit=cfg["gt_limit"],
-                bias_limit=cfg["bias_limit"],
-            )
+            d = Dataset.build_dataset(cfg, 
+                                        data_cfg,
+                                        rngs,
+                                        w, 
+                                        device,)
 
             #autotune(param_ranges, cfg, dataset, rngs)
             tune_results = autotune({
@@ -336,7 +329,7 @@ if __name__ == "__main__":
                 'lambdad':   [20.0, 50.0, 5.0],
                 'lambdaw': [0.0,2,0.2]
             }, cfg, d, rngs,
-            skip_mode = True)
+            skip_mode = False)
 
             del d
         else:
@@ -354,4 +347,4 @@ if __name__ == "__main__":
         #analysis
         num_experiments = 15
         analysis_rngs = [run_experiment.build_rngs(cfg["rng"], device) for _ in range(num_experiments)]
-        analysis(tune_results, cfg, analysis_rngs)
+        analysis(tune_results, cfg, data_cfg, analysis_rngs, device)

@@ -1,3 +1,8 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+BASE_DIR = Path(__file__).parent.parent
+
 import weightipy as wp
 import pandas as pd
 import numpy as np
@@ -70,12 +75,12 @@ if __name__ == "__main__":
     #load survey data
     all_surveys = []
     all_names = []
-    for i in range(35,46):
+    for i in range(23,30):
         week = str(i)
         #survey_path = './data/progress_data/cleaned/d4p_week' + week + '_cleaned.csv'
-        #survey_path = './data/censusHouseholdPulse_data/cleaned/pulse_week'+week+'_cleaned.csv'
-        survey_path = f"./data/axios_ipsos_data/cleaned/week{week}_cleaned.csv"
-        ground_truth_path = './data/progress_data/cleaned/ipums_cleaned_combined.csv'
+        survey_path = BASE_DIR / 'data' / 'censusHouseholdPulse_data' / 'cleaned' / f'pulse_week{week}_cleaned.csv'
+        #survey_path = f"./data/axios_ipsos_data/cleaned/week{week}_cleaned.csv"
+        ground_truth_path = BASE_DIR / 'data' / 'censusHouseholdPulse_data' / 'cleaned' / 'ipums_cleaned_combined.csv'
          
 
         if not os.path.exists(survey_path):

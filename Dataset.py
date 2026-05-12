@@ -5,6 +5,9 @@ from tqdm import tqdm
 from scipy.special import softmax
 import pandas as pd
 import torch
+from pathlib import Path
+BASE_DIR = Path(__file__).parent #used to resolve function calls from different sub_dirs
+
 from util import dict2vector, normalize_to_minus1_plus1, embed_data
 from data_processing.DataProcessing import *
 from data_processing.HouseholdCensusDataProcessing import *
@@ -792,9 +795,11 @@ def build_dataset(cfg,
     if len(valid_weeks) > 0:
         assert week in valid_weeks, "Error: [week] provided to Dataset.build_dataset is not within the valid_weeks of all_datasets.yaml for this particular data set"
     
+    census_path = str(BASE_DIR / dcfg["ground_truth_path"].lstrip("./"))
+    survey_path = str(BASE_DIR / dcfg['survey_path'].lstrip("./")).format(week=week)
     kwargs = dict(
-        ground_truth_path=dcfg['ground_truth_path'],
-        bias_path=dcfg['survey_path'].format(week=week),
+        ground_truth_path=census_path,
+        bias_path=survey_path,
         rngs=rngs,
         device=device,
         gt_limit=gt_limit * multiplier,

@@ -958,7 +958,6 @@ def diagnostic_heatmap(runs_dir, target_var_names, diag_var_names,
         ea = event_accumulator.EventAccumulator(event_file)
         ea.Reload()
         available = ea.Tags().get('scalars', [])
-
         # skip runs missing any required variable
         required = target_var_names + diag_var_names
         if not all(v in available for v in required):
@@ -1133,4 +1132,6 @@ if __name__ == "__main__":
                            target_values=[0.6])
     
     elif True:
-        load_autotune_dir(autotune_dir="./autoTuneDir/")
+        all_results = load_autotune_dir(autotune_dir="./hyperparam_tuning/autotune_history/autoTuneDir_HHP_Phase4Only")
+
+    print(all_results)

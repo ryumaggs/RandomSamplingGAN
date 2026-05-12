@@ -140,12 +140,12 @@ if __name__ == "__main__":
                 if week == "Syn":
                     c_names = d.column_names
                 
-                weights, bias_labels, prob_diffs,  test_probs, test_prob_diffs, generator_losses, discriminator_losses  = gan.train(trainingparams['epochs'],
-                                                                                                                            trainingparams['gtrainingfactor'],
-                                                                                                                            trainingparams['dtrainingfactor'],
-                                                                                                                            writer,
-                                                                                                                            tid,
-                                                                                                                            synthetic=(week=='Syn'),
-                                                                                                                            synthetic_col_names=c_names)
+                _ = gan.train(trainingparams['epochs'],
+                            trainingparams['gtrainingfactor'],
+                            trainingparams['dtrainingfactor'],
+                            writer,
+                            tid,
+                            synthetic=(week=='Syn'),
+                            synthetic_col_names=c_names)
                 writer.close()
         

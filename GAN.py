@@ -757,8 +757,9 @@ class WGAN_GP(GAN):
         temp_disc_training_factor = disc_training_factor
         temp_gen_training_factor = gen_training_factor
         self.entropy_history = [] #reset entropy history
-    
+        pred_history = []
         weight_history = []
+        jsd_history = []
         for epoch in tqdm(range(epochs)):
             if epoch % 1 == 0:
                 with torch.no_grad():
@@ -770,9 +771,10 @@ class WGAN_GP(GAN):
                     writer.add_scalar('tvd', tvd_loss.item(), epoch)
                     
                     if epoch % 100 == 0 or epoch+1 == epochs:
-                        jsd_loss = self.get_JSD_loss(printt=True)
+                        jsd_loss = self.get_JSD_loss(printt=False)
                     else:
                         jsd_loss = self.get_JSD_loss(printt=False)
+                    jsd_history.append(jsd_loss.item())
                     writer.add_scalar('jsd', jsd_loss.item(), epoch)
 
                     #probs = self.generator.get_weights(self.bias_dataset).flatten()
@@ -781,6 +783,7 @@ class WGAN_GP(GAN):
                     #writer.add_scalar('Vaccine prediction', pred, epoch)
                     if not synthetic:
                         pred, _ = self.measure_vaccine()
+                        pred_history.append(pred.item())
                         #weight_history.append(weights.flatten())
                         if len(pred.shape) == 1:
                             pred = np.expand_dims(pred,0)
@@ -862,7 +865,8 @@ class WGAN_GP(GAN):
         
 
             
-        return weights, self.biased_labels, prob_diffs, test_probs, test_prob_diffs, generator_losses, discriminator_losses
+        return weights, self.biased_labels, prob_diffs, test_probs, test_prob_diffs, \
+            generator_losses, discriminator_losses, jsd_history, pred_history
 
     def onestep_train(self, generator_training_factor=1, 
                       discriminator_training_factor=1,

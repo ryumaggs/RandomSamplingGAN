@@ -8,7 +8,7 @@ training:
   save_dir: ""
   trial_id: 0
   week: ""
-  NUM_TRIALS: 1
+  NUM_TRIALS: 2
   gtrainingfactor: 1
   dtrainingfactor: 8
 
@@ -22,19 +22,19 @@ SAVE_DICT:
   SAVE_EVERY:     null #-1 for final save
 
 data:
-  dataset_name: d4p #household_pulse #this string needs to match one of the variable names in
+  dataset_name: household_pulse #d4p #this string needs to match one of the variable names in
                                 #- all_datasets.yaml file
   gt_limit: 50000
-  bias_limit: 2000
+  bias_limit: 10000
   label_information:
     RECVDVACC: 0
-  weeks: ['25']
+  weeks: ['29']
 
 # ── update params. these will override their existing value in 'hparams' below ───────────────────────────────────────────────────────────
 experimental_hparams:
   #lambdad: [10,20,30]
   #lambdaJSD: [20.0]
-  lambdaw: [3,4,5]
+  lambdaw: [0] #[3,4,5]
   
 cartesian_product: False #if false, each variable is tested in isolation
                           # if true, the cartesian product is taken in util.py
@@ -53,8 +53,8 @@ hparams:
   batch_size: 1
   lambdagp: 10
   lambdaw: 0.0
-  lambdad: 50.0 #these are for high quality JSD tuning
-  lambdaJSD: 20.0 #20.0
+  lambdad: 0.0 #50.0 #these are for high quality JSD tuning
+  lambdaJSD: 0.0 #20.0 #20.0
   tau: 0.1 #for temperature of gumbel softmax if no temperature scaling
   temperature_start: 1.0 #if using temperature scaling in gumbel softmax
   temperature_end: 0.3
