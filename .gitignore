@@ -16,3 +16,4 @@ saves*/
 notebook.ipynb
 *.pth
 *.pikl
+hyperparam_tuning/optuna_log.txt
