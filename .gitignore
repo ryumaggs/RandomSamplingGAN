@@ -19,6 +19,7 @@ runs_*/
 saved*/
 saves*/
 hyperparam_tuning_old/
+hyperparam_tuning/optuna_log.txt
 experimental_features/
 *.pikl
 *.pth
