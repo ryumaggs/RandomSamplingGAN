@@ -36,7 +36,9 @@ logging.basicConfig(
 
 def log_callback(study, trial):
     value_str = f"{trial.value:.4f}" if trial.value is not None else "FAILED"
-    logging.info(f"Trial {trial.number} | Value: {value_str} | Params: {trial.params}")
+    constraint = trial.user_attrs.get("constraint", "N/A")
+    constraint_str = f"{constraint:.4f}" if isinstance(constraint, float) else str(constraint)
+    logging.info(f"Trial {trial.number} | Value: {value_str} | Constraint: {constraint_str} | Params: {trial.params}")
 
 #global base config load for optuna objective function
 with open(BASE_DIR/"configs"/"all_datasets.yaml", "r") as f:
@@ -44,6 +46,8 @@ with open(BASE_DIR/"configs"/"all_datasets.yaml", "r") as f:
 with open(BASE_DIR/"configs"/"default_config.yaml", "r") as f:
     base_config = yaml.safe_load(f)
 
+JSD_TARGET = 0.075
+RESULT_TARGET = 0.025
 
 # ── data ────────────────────────────────────────────────────────────────────
 def load_all_datasets():
@@ -100,82 +104,65 @@ def train_wgan_gp(dataset, data_set_info, config, rngs):
     num_trials = config['training']['NUM_TRIALS']
     if data_set_info[2] != 1: #data is loaded in pieces
         num_trials=1
-    for tid in range(num_trials):
-        writer = SummaryWriter(comment=f"iter:{tid}||Week={week}||{hp_str}||seed:{rngs['seed_bias']}")
-        gan = WGAN_GP(
-                rngs=rngs,
-                dataset=dataset,
-                generator_type=hparams['generator_type'],
-                discriminator_type=hparams['discriminator_type'],
-                gen_learning_rate=hparams["glearningrate"],
-                disc_learning_rate=hparams["dlearningrate"],
-                batch_size=hparams["batch_size"],
-                truth_sample_size=hparams["subset_size"],
-                gen_layers=hparams["gen_layers"],
-                disc_layers=hparams["disc_layers"],
-                bias_sample_size=hparams["subset_size"],
-                lambda_gp=hparams["lambdagp"],
-                lambda_weights=hparams["lambdaw"],
-                lambda_demo=hparams["lambdad"],
-                lambda_JSD=hparams["lambdaJSD"],
-                gen_history_length=0,
-                temperature=hparams["tau"],
-                warmup_length=0,
-                lambda_regularizer=0,
-                lambda_first_layer=0,
-                generator_dropout=hparams["generator_dropout"],
-                discriminator_dropout=hparams["discriminator_dropout"],
-                KLIEP_downsample=-1,
-                save_dict= config['SAVE_DICT'],
-                save_dir = "./saves/",
-                device=device,
-            )
 
-        gan_train_output = gan.train(trainingparams['epochs'],
-                trainingparams['gtrainingfactor'],
-                trainingparams['dtrainingfactor'],
-                writer,
-                tid,
-                synthetic=(week=='Syn'),
-                synthetic_col_names=None)
-        predictions.append(gan_train_output[-1])
-        jsd_history.append(gan_train_output[-2])
+    writer = SummaryWriter(comment=f"iter:{0}||Week={week}||{hp_str}||seed:{rngs['seed_bias']}")
+    gan = WGAN_GP(
+            rngs=rngs,
+            dataset=dataset,
+            cfg=config,
+            save_dir = "./saves/",
+        )
+
+    gan_train_output = gan.train(trainingparams['epochs'],
+            trainingparams['gtrainingfactor'],
+            trainingparams['dtrainingfactor'],
+            writer,
+            0,
+            synthetic=(week=='Syn'),
+            synthetic_col_names=None)
+    predictions.append(gan_train_output[-1])
+    jsd_history.append(gan_train_output[-2])
     
     predictions=np.array(predictions)
-    jsd_history = np.array(jsd_history)
-    last_means = predictions[:, int(0.8*config['training']['epochs']):].mean(axis=1)  # shape (4,)
+    jsd_history = np.array(jsd_history)    
     last_jsds = jsd_history[:, int(0.8*config['training']['epochs']):].mean(axis=1)
-    predictions = np.mean(last_means)
     last_jsds = np.mean(last_jsds)
     return predictions, last_jsds  # np.array of shape (T,)
 
 # ── optuna objective ─────────────────────────────────────────────────────────
 def objective(trial):
     config = copy.deepcopy(base_config)
-    config["hparams"]['lambdad'] = trial.suggest_float("lambdad", 20, 50)
-    config["hparams"]['lambdaJSD']= trial.suggest_float("lambdaJSD", 10, 40)
+    config["hparams"]['lambdad'] = trial.suggest_float("lambdad", 0, 50)
+    config["hparams"]['lambdaJSD']= trial.suggest_float("lambdaJSD", 0, 50)
     config["hparams"]['lambdaw']= trial.suggest_float("lambdaw", 0, 2.5)
+    config["hparams"]['lambdaadv'] = trial.suggest_float("lambdaadv", 1, 50)
 
     errors = {}
     for i, (dataset, dname, true_target) in enumerate(zip(datasets, dataset_names, true_targets)):
+        config['device'] = str(dataset_info[dname][1])
         predictions, last_jsds = train_wgan_gp(dataset, dataset_info[dname], config, rngs=all_rngs[i])
         #weight each error by the number of copies of the data set that are used
         if dname not in errors:
             errors[dname] = {}
-            errors[dname]['target'] = abs(predictions - true_target) / dataset_info[dname][2]
-            errors[dname]['jsd'] =  max(0.0, last_jsds - JSD_TARGET)
+            errors[dname]['target'] = max(0.0, np.min(abs(predictions - true_target)) - RESULT_TARGET)
+            errors[dname]['jsd'] =  last_jsds
         else:
-            errors[dname]['target'] += abs(predictions - true_target) / dataset_info[dname][2]
-            errors[dname]['jsd'] +=  max(0.0, last_jsds - JSD_TARGET)
-    total_error = sum(inner[key] for inner in errors.values() for key in inner)
-    return total_error
+            errors[dname]['target'] += max(0.0, np.min(abs(predictions - true_target)) - RESULT_TARGET)
+            errors[dname]['jsd'] +=  last_jsds
+
+    jsd_objective = sum(inner['jsd'] for inner in errors.values()) / len(datasets)
+    target_objective = sum(inner['target'] for inner in errors.values()) / len(datasets) 
+
+    trial.set_user_attr("constraint", target_objective)
+    return jsd_objective
 
 
-JSD_TARGET = 0.075
+
 # ── run study ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     T = 600
-    study = optuna.create_study(direction="minimize")
+    sampler = optuna.samplers.TPESampler(constraints_func=lambda t: [t.user_attrs["constraint"]])
+    study = optuna.create_study(direction="minimize", sampler=sampler)
     try:
         study.optimize(objective, n_trials=50, n_jobs=2, callbacks=[log_callback])
     except KeyboardInterrupt:
