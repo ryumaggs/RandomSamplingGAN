@@ -864,9 +864,6 @@ class WGAN_GP(GAN):
                         y=self.biased_labels)
             np.savez("./"+self.save_dir+"/one_hot_data_"+str(trial_id)+".npz", x=self.bias_dataset.cpu().numpy(), 
                         y=self.biased_labels)
-        
-        
-
             
         return weights, self.biased_labels, prob_diffs, test_probs, test_prob_diffs, \
             generator_losses, discriminator_losses, jsd_history, pred_history

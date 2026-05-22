@@ -5,6 +5,11 @@ import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
 
+def load_config(path=None):
+    _DEFAULT_CONFIG_PATH = "./configs/default_config.yaml"
+    """Load a YAML config. Falls back to default_config.yaml if no path given."""
+    with open(path or _DEFAULT_CONFIG_PATH, "r") as f:
+        return yaml.safe_load(f)
 def rename_check(df, old_name, new_name=None):
     if new_name is not None:
         df.rename(columns={old_name: new_name}, inplace=True)

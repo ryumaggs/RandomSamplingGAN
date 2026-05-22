@@ -50,7 +50,6 @@ def load_runs_as_numpy(runs_path, var_names, filter_by, num_runs=20):
     
     for vname in all_data:
         all_data[vname] = np.array(all_data[vname])
-        print(vname, [len(sublist) for sublist in all_data[vname]])
     return all_data, event_files
 
 
@@ -92,3 +91,60 @@ def save_final_median(path_to_saves):
     np.savez(path_to_saves+"/chosen_data.npz", x = datum, y = labels)
     np.savez(path_to_saves+"/chosen_weight_history.npz", w = weights)
     print("Median estimate:", median)
+
+def normalize_matrix(m):
+    mn, mx = m.min(), m.max()
+    return (m - mn) / (mx - mn) if mx > mn else np.zeros_like(m)
+
+def average_row_k_p(arr, k, p):
+    if p is None:
+        p = arr.shape[1]
+    row_means = arr[:, k:p].mean(axis=1)
+    return row_means
+
+def find_best_run(cfg,
+               path_to_saves,):
+    load_filters = []
+    for w in cfg['data']['weeks']:
+        load_filters.append('Week='+str(w))
+    runs_path = './saves/runs/'
+    all_outs = {}
+    target_var_name = 'RECVDVACC prediction'
+    for filter_by in load_filters:
+        num_runs = 10
+        out, event_files = load_runs_as_numpy(runs_path,  
+                                    [target_var_name, 'GenLoss', 'Gen Entropy', 
+                                    'tvd', 'Warmup', 'Bias score', 'Gradient Penalty', 'jsd',
+                                    'Truth - Fake scores'],
+                                    filter_by=[filter_by],
+                                    num_runs=num_runs,
+                                    )
+        all_outs[filter_by] = out
+    k_ = 3 #400
+
+    normalized_all_outs = {}
+    for k in all_outs.keys():
+        tout = all_outs[k]
+        normalized_all_outs[k] = {}
+        for sub_k in tout.keys():
+            if sub_k == target_var_name:
+                normalized_all_outs[k][sub_k] = tout[sub_k]
+            elif tout[sub_k].size != 0:
+                normalized_all_outs[k][sub_k] = normalize_matrix(tout[sub_k])
+
+    for fb, normalized_out in normalized_all_outs.items():
+        jsd = average_row_k_p(normalized_out['jsd'], k=k_, p=None)
+        tvd = average_row_k_p(normalized_out['tvd'], k=k_, p=None)
+        tf = average_row_k_p(normalized_out['Truth - Fake scores'], k=k_, p=None)
+        jsd_std = np.std(normalized_out['jsd'][:,k_:],axis=1)
+
+        #jsd /= jsd.max()
+        #tf /= tf.max()
+        tvd /= tvd.max()
+        jsd_std /= jsd_std.max()
+
+        summ = jsd
+        selected_trial_id = np.argmin(summ).item()
+        print("Selected Trial ID:", selected_trial_id)
+        print("Estimate Target Variable: ", normalized_out[target_var_name][selected_trial_id,-1])
+        
