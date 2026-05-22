@@ -36,6 +36,10 @@ from attribution.attribution import *
 # For learning
 #runs_consistency_SameData_SameSeen_diffNetwork,Seed:359556
 '''
+Best params: {'lambdad': 47.06726125301136, 'lambdaJSD': 32.03099184880099, 'lambdaw': 0.011258598476026149}
+Best value:  0.032357343743603884
+
+
 DEBUG_MODE = False
 if DEBUG_MODE:
     DEFAULTS.update({
@@ -91,7 +95,7 @@ if __name__ == "__main__":
                 hparams=local_cfg['hparams']
                 trainingparams=local_cfg['training']
                     
-                d = Dataset.build_dataset(cfg, 
+                d = Dataset.build_dataset(local_cfg, 
                                         data_cfg,
                                         rngs,
                                         week, 
@@ -99,28 +103,7 @@ if __name__ == "__main__":
                 gan = WGAN_GP(
                             rngs=rngs,
                             dataset=d,
-                            generator_type=hparams['generator_type'],
-                            discriminator_type=hparams['discriminator_type'],
-                            gen_learning_rate=hparams["glearningrate"],
-                            disc_learning_rate=hparams["dlearningrate"],
-                            batch_size=hparams["batch_size"],
-                            truth_sample_size=hparams["subset_size"],
-                            gen_layers=hparams["gen_layers"],
-                            disc_layers=hparams["disc_layers"],
-                            bias_sample_size=hparams["subset_size"],
-                            lambda_gp=hparams["lambdagp"],
-                            lambda_weights=hparams["lambdaw"],
-                            lambda_demo=hparams["lambdad"],
-                            lambda_JSD=hparams["lambdaJSD"],
-                            gen_history_length=0,
-                            temperature=hparams["tau"],
-                            warmup_length=0,
-                            lambda_regularizer=0,
-                            lambda_first_layer=0,
-                            generator_dropout=hparams["generator_dropout"],
-                            discriminator_dropout=hparams["discriminator_dropout"],
-                            KLIEP_downsample=-1,
-                            save_dict= SAVE_DICT,
+                            cfg=local_cfg,
                             save_dir = trial_dir,
                         )
 

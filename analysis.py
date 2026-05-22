@@ -1050,6 +1050,7 @@ def diagnostic_heatmap(runs_dir, target_var_names, diag_var_names,
         plt.tight_layout()
         plt.savefig('./testheatmap.png')
 
+
 def load_autotune_dir(autotune_dir):
     """
     For each week subdirectory in autotune_dir, load all TensorBoard runs
@@ -1105,10 +1106,80 @@ def load_autotune_dir(autotune_dir):
 
     return results
 
+def row_counts_of_smallest_k(arr, k):
+    flat_idx = np.argpartition(arr.ravel(), k)[:k]
+    rows, cols = np.unravel_index(flat_idx, arr.shape)
+    unique, counts = np.unique(rows, return_counts=True)
+    return dict(zip(unique.tolist(), counts.tolist())), rows, cols
 
+def row_with_smallest_avg(arr, k, p):
+    if p is None:
+        p = arr.shape[1]
+    row_means = arr[:, k:p].mean(axis=1)
+    return row_means
+
+def row_with_most_negative_slope(arr, k, p):
+    if p is None:
+        p = arr.shape[1]
+    segment = arr[:, k:p]
+    x = np.arange(segment.shape[1])
+    slopes = np.array([np.polyfit(x, segment[i], 1)[0] for i in range(arr.shape[0])])
+    return np.argmin(slopes)
+
+def save_pickle():
+    all_outs = {}
+    runs_path = './runs_27_29/'
+    target_var_name = 'RECVDVACC prediction'
+    load_filters = ['Week=23', 'Week=24', 'Week=25',
+                    'Week=26', 'Week=27', 'Week=28', 'Week=29']
+
+    for filter_by in load_filters:
+        num_runs = 10
+        out, event_files = load_runs_as_numpy(
+            runs_path,
+            [target_var_name, 'GenLoss', 'Gen Entropy',
+             'tvd', 'Warmup', 'Bias score', 'Gradient Penalty', 'jsd',
+             'Truth - Fake scores'],
+            filter_by=[filter_by],
+            num_runs=num_runs,
+        )
+        all_outs[filter_by] = out
+    
+    with open('./analysis_data.pikl', 'wb') as file:
+        pickle.dump(all_outs, file)
+    
+def new_stopping():
+    target_var_name = 'RECVDVACC prediction'
+    with open('./analysis_data.pikl', 'rb') as file:
+        all_outs = pickle.load(file)
+    
+    for fb in all_outs.keys():
+        out = all_outs[fb]
+        dictt, row, col = row_counts_of_smallest_k(out['jsd'], k=20)
+        jsd = row_with_smallest_avg(out['jsd'], k=200, p=250)
+        tvd = row_with_smallest_avg(out['tvd'], k=250, p=None)
+        tf = row_with_smallest_avg(out['Truth - Fake scores'], k=400, p=None)
+        combined = normalize_matrix(jsd) + normalize_matrix(tvd) +\
+              normalize_matrix(tf)
+        summ = jsd + tvd + tf
+        print(fb)
+        print("raw: ", summ, np.argmin(summ))
+        print("normalized: ", combined, np.argmin(combined))
+        tvar = np.mean(out[target_var_name][:,-400:],axis=1)
+        print(tvar)
+        jsdd = np.mean(out['jsd'][:,-400:],axis=1)
+        print(jsdd, np.mean(jsdd))
+        stdd = np.std(out['jsd'][:,-400:],axis=1)
+        print(stdd, np.mean(stdd))
+        print("")
+
+
+def normalize_matrix(m):
+    mn, mx = m.min(), m.max()
+    return (m - mn) / (mx - mn) if mx > mn else np.zeros_like(m)
 
 if __name__ == "__main__":
-    runs_path = "runs/"
+    runs_path = "runs_27_29/"
 
     if False: #analyzing target prediction runs aggregation
         target_var_tb_name = "RECVDVACC prediction"
@@ -1131,7 +1202,8 @@ if __name__ == "__main__":
                            diag_var_names=['tvd','jsd','Gen Entropy'], 
                            target_values=[0.6])
     
-    elif True:
+    elif False:
         all_results = load_autotune_dir(autotune_dir="./hyperparam_tuning/autotune_history/autoTuneDir_HHP_Phase4Only")
-
-    print(all_results)
+    elif True:
+        new_stopping()
+        #save_pickle()
