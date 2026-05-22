@@ -8,6 +8,7 @@ saves_history/
 hyperparam_tuning/autotune_history/
 hyperparam_tuning/autoTuneDir/
 hyperparam_tuning/runs/
+hyperparam_tuning_old/
 experimental_features/
 runs/
 runs*/
