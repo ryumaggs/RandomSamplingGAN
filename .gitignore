@@ -13,6 +13,7 @@ experimental_features/
 runs/
 runs*/
 saved*/
+main/
 saves*/
 notebook.ipynb
 *.pth
