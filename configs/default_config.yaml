@@ -22,19 +22,19 @@ SAVE_DICT:
   SAVE_EVERY:     null #-1 for final save
 
 data:
-  dataset_name: household_pulse #d4p #this string needs to match one of the variable names in
+  dataset_name: axios_ipsos #d4p #this string needs to match one of the variable names in
                                 #- all_datasets.yaml file
   gt_limit: 50000
   bias_limit: 10000
   label_information:
     RECVDVACC: 0
-  weeks: ['29']
+  weeks: ['35'] #['35', '37', '39', '40', '42', '43', '44', '45']
 
 # ── update params. these will override their existing value in 'hparams' below ───────────────────────────────────────────────────────────
 experimental_hparams:
   #lambdad: [10,20,30]
-  #lambdaJSD: [20.0]
-  lambdaw: [0] #[3,4,5]
+  #lambdaJSD: [30.0]
+  lambdaw: [0.75] #[]
   
 cartesian_product: False #if false, each variable is tested in isolation
                           # if true, the cartesian product is taken in util.py
@@ -51,13 +51,16 @@ hparams:
   discriminator_dropout: 0.2
   subset_size: 128
   batch_size: 1
+  tf_batch_size: 9
+  lambdaadv: 1
   lambdagp: 10
   lambdaw: 0.0
-  lambdad: 0.0 #50.0 #these are for high quality JSD tuning
-  lambdaJSD: 0.0 #20.0 #20.0
+  lambdad: 20 #HPS was 25, 5
+  lambdaJSD: 40 #20.0 #20.0
   tau: 0.1 #for temperature of gumbel softmax if no temperature scaling
   temperature_start: 1.0 #if using temperature scaling in gumbel softmax
-  temperature_end: 0.3
+  temperature_end: 0.1
+  temperature: 0.1
   
 
 
