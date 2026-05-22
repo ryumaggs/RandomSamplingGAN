@@ -17,8 +17,10 @@ import pickle
 from attribution.attribution import *
 
 class GAN():
-    def __init__(self,
-                 rngs,
+    def __init__(self, rngs, dataset, cfg, save_dir):
+        '''
+
+                         rngs,
                  dataset,
                  generator_type,
                  discriminator_type,
@@ -29,6 +31,7 @@ class GAN():
                 gen_layers,
                 disc_layers,
                 bias_sample_size,
+                lambda_adv,
                 lambda_gp,
                 lambda_weights,
                 lambda_demo,
@@ -45,87 +48,89 @@ class GAN():
                 save_dict={},
                 save_dir = "",):
 
-        '''
         subset_size,
                  batch_size,
                  temperature,
                  output_size,
                  device
         '''
+        
         self.entropy_history = []
         self.embedding_dict = dataset.embedding_dict
-        self.lambda_first_layer = lambda_first_layer
+        #self.lambda_first_layer = lambda_first_layer
         self.input_grad_history = []
         self.critic_input_grad_history = []
         self.save_dir = save_dir
-        self.save_dict = save_dict
-        self.discriminator_type = discriminator_type
-        self.disc_learning_rate = disc_learning_rate
-        self.disc_layers = disc_layers
-        self.discriminator_dropout = discriminator_dropout
-        self.sample_size = truth_sample_size
+        self.save_dict = cfg['SAVE_DICT']
+        self.discriminator_type = cfg['hparams']['discriminator_type']
+        self.disc_learning_rate = cfg['hparams']['dlearningrate']
+        self.disc_layers = cfg['hparams']['disc_layers']
+        self.discriminator_dropout = cfg['hparams']['discriminator_dropout']
+        self.sample_size = cfg['hparams']['subset_size']
         self.weights_history = []
-        self.gen_history_length = gen_history_length
+        #self.gen_history_length = gen_history_length
         self.generator = None
         self.discriminator = None
         self.rngs=rngs
         self.start_decay = 100
-        self.batch_size = batch_size
-        self.device=device
-        self.temperature = temperature
-        self.generator_type = generator_type
-        self.lambda_gp = lambda_gp
-        self.lambda_weights=lambda_weights
-        self.lambda_demo = lambda_demo
-        self.lambda_jsd = lambda_JSD
-        self.discriminator_starting_lr = disc_learning_rate
-        self.generator_starting_lr = gen_learning_rate
+        self.batch_size = cfg['hparams']['batch_size']
+        self.tf_batch_size = cfg['hparams']['tf_batch_size']
+        self.device = torch.device(cfg['device'])
+        self.temperature = cfg['hparams']['temperature']
+        self.generator_type = cfg['hparams']['generator_type']
+        self.lambda_adv = cfg['hparams']['lambdaadv']
+        self.lambda_gp = cfg['hparams']['lambdagp']
+        self.lambda_weights=cfg['hparams']['lambdaw']
+        self.lambda_demo = cfg['hparams']['lambdad']
+        self.lambda_jsd = cfg['hparams']['lambdaJSD']
+        self.discriminator_starting_lr = cfg['hparams']['dlearningrate']
+        self.generator_starting_lr = cfg['hparams']['glearningrate']
         self.final_dataset_shape = dataset.biased_dataset.shape[2]
 
-        if generator_type == 'standard':
+        if self.generator_type == 'standard':
             self.generator = dataGen(rngs=self.rngs,
                                      num_features=self.final_dataset_shape,
-                                     layers=gen_layers,
-                                     sample_size=bias_sample_size,
-                                     dropout=generator_dropout,
-                                     temperature=temperature,
+                                     layers=cfg['hparams']['gen_layers'],
+                                     sample_size=cfg['hparams']['subset_size'],
+                                     dropout=cfg['hparams']['generator_dropout'],
+                                     temperature=cfg['hparams']['temperature'],
                                      embedding_dict=self.embedding_dict).to(self.device)
-        elif generator_type == 'deepSet':
+        elif self.generator_type == 'deepSet':
             self.generator = DeepSetNet(rngs=self.rngs,
-                                        num_features=self.final_dataset_shape,
-                                     layers=gen_layers,
-                                     sample_size=bias_sample_size,
-                                     dropout=generator_dropout,
-                                     batch_size = batch_size,
-                                     temperature=temperature,
+                                     num_features=self.final_dataset_shape,
+                                     layers=cfg['hparams']['gen_layers'],
+                                     sample_size=cfg['hparams']['subset_size'],
+                                     dropout=cfg['hparams']['generator_dropout'],
+                                     batch_size = cfg['hparams']['batch_size'],
+                                     temperature=cfg['hparams']['temperature'],
                                      embedding_dict=self.embedding_dict).to(self.device)
-        elif generator_type == 'deepSetComplex':
+        elif self.generator_type == 'deepSetComplex':
             self.generator = DeepSetComplexNet(rngs=self.rngs,
-                                        num_features=self.final_dataset_shape,
-                                     layers=gen_layers,
-                                     sample_size=bias_sample_size,
-                                     dropout=generator_dropout,
-                                     batch_size = batch_size,
-                                     temperature=temperature,
+                                     num_features=self.final_dataset_shape,
+                                     layers=cfg['hparams']['gen_layers'],
+                                     sample_size=cfg['hparams']['subset_size'],
+                                     dropout=cfg['hparams']['generator_dropout'],
+                                     batch_size = cfg['hparams']['batch_size'],
+                                     temperature=cfg['hparams']['temperature'],
                                      embedding_dict=self.embedding_dict).to(self.device)
-        elif generator_type == 'weights':
+        elif self.generator_type == 'weights':
             self.generator = weightsGen(survey_dataset=dataset.biased_dataset,
-                                        sample_size=bias_sample_size,).to(self.device)
+                                        sample_size=cfg['hparams']['subset_size'],).to(self.device)
         else:
             raise NotImplementedError
     
         self.generator_config = {
                                     "rng_seed": 0,
                                     "num_features": self.final_dataset_shape,
-                                    "layers": gen_layers,
-                                    "sample_size": bias_sample_size,
-                                    "dropout": generator_dropout,
-                                    "batch_size": batch_size,
-                                    "temperature": temperature,
+                                    "layers": cfg['hparams']['gen_layers'],
+                                    "sample_size": cfg['hparams']['subset_size'],
+                                    "dropout": cfg['hparams']['generator_dropout'],
+                                    "batch_size": cfg['hparams']['batch_size'],
+                                    "temperature": cfg['hparams']['temperature'],
                                     "embedding_dict": self.embedding_dict,
                                 }
         self.generator_optimizer = torch.optim.Adam(self.generator.parameters(), 
-                                                    lr=gen_learning_rate,
+                                                    lr=cfg['hparams']['glearningrate'],
                                                     betas=(0, 0.9),
                                                     weight_decay=1e-4)
         
@@ -149,24 +154,21 @@ class GAN():
         self.ground_truth_dataset = dataset.ground_truth_dataset
         self.bias_dataset = dataset.biased_dataset
 
-        self.unscaled_ground_truth = torch.tensor(dataset.unscaled_ground_truth).to(device)
-        self.unscaled_biased = torch.tensor(dataset.unscaled_biased).to(device)
+        self.unscaled_ground_truth = torch.tensor(dataset.unscaled_ground_truth).to(self.device)
+        self.unscaled_biased = torch.tensor(dataset.unscaled_biased).to(self.device)
 
         self.ground_truth = dataset.ground_truth
-        self.truth_sample_size = truth_sample_size    
+        self.truth_sample_size = cfg['hparams']['subset_size']    
         self.data_type = dataset.type
 
-        self.lambda_regularizer = lambda_regularizer
         self.biased_labels = dataset.biased_labels  
         self.ground_truth_demographics = dataset.ground_truth_demographics 
 
         self.gt_cpu = dataset.gt_cpu
         self.bias_cpu = dataset.bias_cpu
 
-        if KLIEP_downsample == -1:
-            self.KLIEP_downsample = -1
-        else:
-            self.KLIEP_downsample=min(KLIEP_downsample,self.unscaled_biased.shape[0])
+
+        self.KLIEP_downsample = -1
 
         self.original_distribution = None
         if hasattr(dataset, "original_distribution"):
@@ -889,10 +891,6 @@ class WGAN_GP(GAN):
             spread_regularizer.append(spread_reg)
             all_gen_grads.append(avg_grad)
             weight_history.append(weights.detach().cpu().numpy())
-            if self.gen_history_length > 0:
-                if len(self.weights_history) > self.gen_history_length:
-                    self.weights_history.pop(0)
-                self.weights_history.append(weights)
         
         #self.reset_discriminator()
 
@@ -971,7 +969,7 @@ class WGAN_GP(GAN):
         #if self.lambda_first_layer > 0:
         #    first_l1 = self.first_layer_sparse_loss()
         if True:
-            generator_loss = bias_loss \
+            generator_loss = self.lambda_adv * bias_loss \
                             + self.lambda_weights * spread_loss \
                             + self.lambda_demo * demo_loss \
                             + self.lambda_jsd * demo_loss2
@@ -1039,26 +1037,21 @@ class WGAN_GP(GAN):
         self.generator.set_train()
         sds = []
         bias_unique_counts = [0]
-        sds, selected_indices, weights = self.generator.forward(self.bias_dataset)
-        if True: #weights history
-            for past_weight in self.weights_history:
-                indices = torch.multinomial(past_weight, self.sample_size, replacement=False)
-                sds_past = self.bias_dataset[indices].unsqueeze(0)
-                sds = torch.concat((sds,sds_past))
+        sds, selected_indices, weights = self.generator.forward(self.bias_dataset,
+                                                                batch_override=self.batch_size+self.tf_batch_size)
         bias_scores = self.discriminator(sds.to(self.device))
-        bo = None #sds.shape[0]
-        ground_truth_data = self.generate_data(batch_override=bo)
+        ground_truth_data = self.generate_data(batch_override=self.batch_size+self.tf_batch_size)
         ground_truth_scores = self.discriminator(ground_truth_data)
         #print(torch.mean(bias_scores), torch.mean(ground_truth_scores))
         # Compute WGAN-GP loss
         gp = 0
         gp_grad = 0
         if self.lambda_gp > 0:
-            gp, gp_grad = self.compute_penalty(ground_truth_data, sds, (bo is not None))
-        discriminator_loss = torch.mean(bias_scores) - torch.mean(ground_truth_scores) + self.lambda_gp * gp
+            gp, gp_grad = self.compute_penalty(ground_truth_data[:self.batch_size], 
+                                               sds[:self.batch_size], True)
+        discriminator_loss = torch.mean(bias_scores[:self.batch_size]) - torch.mean(ground_truth_scores[:self.batch_size]) + self.lambda_gp * gp
         self.discriminator_optimizer.zero_grad()
         discriminator_loss.backward() #removed retain_graph = True
-        #print(torch.mean(bias_scores).item(), torch.mean(ground_truth_scores).item(), gp)
         if not isinstance(gp, int):
             gp = gp.item()
 
