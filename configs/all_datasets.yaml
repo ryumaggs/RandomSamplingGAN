@@ -1,7 +1,7 @@
 # ── All Data set Setup ───────────────────────────────────────────────────────────────
 axios_ipsos:
   cls: Axios_ipsosdataset
-  ground_truth_path: "./data/axios_ipsos_data/cleaned/ipums_cleaned.csv"
+  ground_truth_path: "./data/axios_ipsos_data/cleaned/ipums_cleaned_combined.csv"
   survey_path: "./data/axios_ipsos_data/cleaned/week{week}_cleaned.csv"
   valid_weeks: ['35', '37', '39', '40', '42', '43', '44', '45']
 

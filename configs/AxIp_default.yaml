@@ -7,7 +7,7 @@ training:
   save_every: null
   save_dir: ""
   trial_id: 0
-  NUM_TRIALS: 3
+  NUM_TRIALS: 10
   gtrainingfactor: 1
   dtrainingfactor: 8
 
@@ -27,7 +27,7 @@ data:
   bias_limit: 10000
   label_information:
     RECVDVACC: 0
-  weeks: ['35', '37', '39', '40', '42', '43', '44', '45']
+  weeks: ['45'] #['35', '37', '39', '40', '42', '43', '44', '45']
 
 # ── update params. these will override their existing value in 'hparams' below ───────────────────────────────────────────────────────────
 experimental_hparams:
