@@ -72,8 +72,11 @@ if __name__ == "__main__":
             else:
                 print(f"Directory '{main_dir}' already exists.")
         
-        list_var_updates = cartesian_product_hyperparams(cfg['experimental_hparams'],
-                                                 product=cfg['cartesian_product'])
+        if cfg['experimental_hparams'] is not None:
+            list_var_updates = cartesian_product_hyperparams(cfg['experimental_hparams'],
+                                                    product=cfg['cartesian_product'])
+        else:
+            list_var_updates = [{'lambdaw': cfg['hparams']['lambdaw']}]
 
         for var_update in list_var_updates:
             for tid in range(NUM_TRIALS):
