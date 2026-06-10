@@ -362,7 +362,14 @@ def axios_recoding_survey_and_census_data(survey_df, census_df, target_var):
         census_df = census_df.filter(items=['PERWT'] + relevant_columns)
         census_df = census_df.dropna()
 
-    return survey_df, census_df
+        #aggregate by unique data points, sum PERWT's
+        grouped_df = census_df.groupby(list(census_df.columns[1:]), as_index=False)['PERWT'].sum()
+        # Reorder columns so PERWT is first
+        cols = ['PERWT'] + [c for c in grouped_df.columns if c != 'PERWT']
+        combined_census_df = grouped_df[cols]
+
+
+    return survey_df, census_df, combined_census_df
 
 def load_csv(path_to_survey, path_to_census):
     '''
