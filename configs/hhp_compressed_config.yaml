@@ -1,0 +1,80 @@
+# ── Data configs ──────────────────────────────────────────────────────────────────────
+device: 'cuda:0' #cpu also available
+
+# ── Save options ───────────────────────────────────────────────────────────
+SAVE_DICT:
+  SAVE_IG: False
+  SAVE_DATASET:   True
+  SAVE_WEIGHTS:   True
+  SAVE_GENERATOR: False
+  SAVE_CRITIC:    False
+  SAVE_EVERY:     -1 # saves every X epochs, put -1 if you only want save on last epoch
+
+# ── Training Hyperparameters ───────────────────────────────────────────────────────────
+training:
+  epochs: 600
+  save_every: null
+  save_dir: ""
+  trial_id: 0
+  week: ""
+  NUM_TRIALS: 3
+  gtrainingfactor: 1
+  dtrainingfactor: 8
+
+data:
+  dataset_name: household_pulse #d4p #this string needs to match one of the variable names in
+                                #- all_datasets.yaml file
+  gt_limit: 50000
+  bias_limit: 10000
+  label_information:
+    RECVDVACC: 0
+  weeks: ['29'] #must be a string within a list: list[str]
+
+# ── update params. these will override their existing value in 'hparams' below ───────────────────────────────────────────────────────────
+experimental_hparams:
+  #lambdad: [10,20,30]
+  #lambdaJSD: [20.0]
+  lambdaw: [0.0] #[3,4,5]
+  
+cartesian_product: False #if false, each variable is tested in isolation
+                          # if true, the cartesian product is taken in util.py
+
+# ── default Network Architecture & params ───────────────────────────────────────────────────────────
+hparams:
+  generator_type: 'deepSet'
+  discriminator_type: 'deepSet'
+  glearningrate: 0.00001
+  dlearningrate: 0.00005
+  gen_layers: [256, 256]
+  disc_layers: [256, 256]
+  generator_dropout: 0.2
+  discriminator_dropout: 0.2
+  subset_size: 128
+  batch_size: 1
+  lambdagp: 10
+  lambdaw: 0.0
+  lambdad: 20.0 #50.0 #these are for high quality JSD tuning
+  lambdaJSD: 5.0 #20.0 #20.0
+  tau: 0.1 #for temperature of gumbel softmax if no temperature scaling
+  temperature_start: 1.0 #if using temperature scaling in gumbel softmax
+  temperature_end: 0.3
+  
+
+
+# ── RNG control ───────────────────────────────────────────────────────────────
+# mode options:
+#   fully_random  — all sources randomised, seed ignored (default multi-run)
+#   fix_data      — same data each run, network re-randomised (isolate hparam changes)
+#   fix_network   — same network init, data randomised
+#   fully_fixed   — everything fixed (full reproducibility)
+rng:
+  mode: fully_random
+  seed: null            # set an int to fix the seed; null = random
+
+#old parameters no longer used
+depricated:
+  KLIEP_downsample: -1
+  warmup_epochs: 0
+  wudur: 1
+  gen_history_length: 0
+  lambda_first_layer: 0
