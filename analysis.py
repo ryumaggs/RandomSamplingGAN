@@ -14,6 +14,7 @@ from tqdm import tqdm
 import pickle
 import torch
 import re
+import ast
 
 def plot_2d_runs(data):
     # Compute mean and standard deviation across experiments
@@ -79,6 +80,9 @@ def load_runs_as_numpy(runs_path, var_names, filter_by, num_runs=9):
             for event in prediction_events:
                 cur_pred.append(event.value)
             all_data[vname].append(cur_pred)
+        lengths = set(len(x) for x in all_data[vname])
+        if len(lengths) > 1:
+            print(f"MISMATCH in {vname}: {lengths}")
         all_data[vname] = np.array(all_data[vname])
     return all_data, event_files
 
@@ -1050,7 +1054,6 @@ def diagnostic_heatmap(runs_dir, target_var_names, diag_var_names,
         plt.tight_layout()
         plt.savefig('./testheatmap.png')
 
-
 def load_autotune_dir(autotune_dir):
     """
     For each week subdirectory in autotune_dir, load all TensorBoard runs
@@ -1106,6 +1109,95 @@ def load_autotune_dir(autotune_dir):
 
     return results
 
+def summarize_starting_predictions_by_combo(runs_path, num_runs=50):
+    '''
+    Groups tensorboard run folders in runs_path by the target-variable
+    combination baked into each folder's name (the '||labels:[...]' suffix
+    experiments.py appends to the SummaryWriter comment), then for each
+    combination reports, across all runs sharing that combination:
+      - mean/std of the additional target variable's '<VAR> prediction'
+        scalar at its first logged step
+      - mean/std of each run's own mean over its last third of time steps
+      - the same last-third-mean aggregation, but for the baseline
+        'RECVDVACC prediction' scalar
+
+    Returns
+    -------
+    dict: {combo_label_str: {var_name: {'var', 'start_mean', 'start_std',
+                                         'end_mean', 'end_std',
+                                         'recvdvacc_end_mean', 'recvdvacc_end_std',
+                                         'tvd_end_mean', 'tvd_end_std',
+                                         'jsd_end_mean', 'jsd_end_std', 'n'}}}
+    '''
+    def last_third_means(preds):
+        runs = [run for run in preds if len(run) > 0]
+        return np.array([np.mean(run[-max(1, len(run)//3):]) for run in runs])
+
+    label_re = re.compile(r"labels:(\[[^\]]*\])")
+    combo_to_names = {}
+    for name in os.listdir(runs_path):
+        if not os.path.isdir(os.path.join(runs_path, name)):
+            continue
+        match = label_re.search(name)
+        if match is None:
+            continue
+        combo_to_names.setdefault(match.group(1), []).append(name)
+
+    results = {}
+    for combo_str, names in combo_to_names.items():
+        label_names = ast.literal_eval(combo_str)
+        extra_vars = [l for l in label_names if l != 'RECVDVACC']
+        if not extra_vars:
+            extra_vars = label_names
+        recvdvacc_tag = "RECVDVACC prediction"
+        tvd_tag = "tvd"
+        jsd_tag = "jsd"
+        var_tags = [f"{v} prediction" for v in extra_vars]
+
+        out, _ = load_runs_as_numpy(runs_path, var_tags + [recvdvacc_tag, tvd_tag, jsd_tag], filter_by=[combo_str],
+                                     num_runs=max(len(names), num_runs))
+        recvdvacc_ending_means = last_third_means(out[recvdvacc_tag])
+        tvd_ending_means = last_third_means(out[tvd_tag])
+        jsd_ending_means = last_third_means(out[jsd_tag])
+
+        combo_results = {}
+        print()
+        print(f"{combo_str}:")
+        for var_name, tag in zip(extra_vars, var_tags):
+            preds = out[tag]
+            runs = [run for run in preds if len(run) > 0]
+            starting_values = np.array([run[0] for run in runs])
+            if starting_values.size == 0:
+                continue
+            ending_means = last_third_means(preds)
+
+            combo_results[var_name] = {
+                'var': var_name,
+                'start_mean': float(np.mean(starting_values)),
+                'start_std': float(np.std(starting_values)),
+                'end_mean': float(np.mean(ending_means)),
+                'end_std': float(np.std(ending_means)),
+                'recvdvacc_end_mean': float(np.mean(recvdvacc_ending_means)),
+                'recvdvacc_end_std': float(np.std(recvdvacc_ending_means)),
+                'tvd_end_mean': float(np.mean(tvd_ending_means)),
+                'tvd_end_std': float(np.std(tvd_ending_means)),
+                'jsd_end_mean': float(np.mean(jsd_ending_means)),
+                'jsd_end_std': float(np.std(jsd_ending_means)),
+                'n': int(starting_values.shape[0]),
+            }
+            r = combo_results[var_name]
+            print(f"  {var_name}:")
+            print(f"    start: mean={r['start_mean']:.4f}, std={r['start_std']:.4f}")
+            print(f"    end:   mean={r['end_mean']:.4f}, std={r['end_std']:.4f}")
+            print(f"    n={r['n']}")
+        if combo_results:
+            print(f"  RECVDVACC end: mean={np.mean(recvdvacc_ending_means):.4f}, std={np.std(recvdvacc_ending_means):.4f}")
+            print(f"  tvd (non-witheld JSD) end: mean={np.mean(tvd_ending_means):.4f}, std={np.std(tvd_ending_means):.4f}")
+            print(f"  jsd end: mean={np.mean(jsd_ending_means):.4f}, std={np.std(jsd_ending_means):.4f}")
+            results[combo_str] = combo_results
+
+    return results
+
 def row_counts_of_smallest_k(arr, k):
     flat_idx = np.argpartition(arr.ravel(), k)[:k]
     rows, cols = np.unravel_index(flat_idx, arr.shape)
@@ -1126,9 +1218,8 @@ def row_with_most_negative_slope(arr, k, p):
     slopes = np.array([np.polyfit(x, segment[i], 1)[0] for i in range(arr.shape[0])])
     return np.argmin(slopes)
 
-def save_pickle():
+def save_pickle(runs_path):
     all_outs = {}
-    runs_path = './runs_27_29/'
     target_var_name = 'RECVDVACC prediction'
     load_filters = ['Week=23', 'Week=24', 'Week=25',
                     'Week=26', 'Week=27', 'Week=28', 'Week=29']
@@ -1143,6 +1234,7 @@ def save_pickle():
             filter_by=[filter_by],
             num_runs=num_runs,
         )
+        print(out['jsd'].shape)
         all_outs[filter_by] = out
     
     with open('./analysis_data.pikl', 'wb') as file:
@@ -1155,18 +1247,20 @@ def new_stopping():
     
     for fb in all_outs.keys():
         out = all_outs[fb]
-        dictt, row, col = row_counts_of_smallest_k(out['jsd'], k=20)
+        if len(out['RECVDVACC prediction']) == 0:
+            continue
+        #dictt, row, col = row_counts_of_smallest_k(out['jsd'], k=20)
         jsd = row_with_smallest_avg(out['jsd'], k=200, p=250)
         tvd = row_with_smallest_avg(out['tvd'], k=250, p=None)
         tf = row_with_smallest_avg(out['Truth - Fake scores'], k=400, p=None)
         combined = normalize_matrix(jsd) + normalize_matrix(tvd) +\
               normalize_matrix(tf)
-        summ = jsd + tvd + tf
+        summ = jsd
         print(fb)
         print("raw: ", summ, np.argmin(summ))
         print("normalized: ", combined, np.argmin(combined))
         tvar = np.mean(out[target_var_name][:,-400:],axis=1)
-        print(tvar)
+        print("tvar: ", tvar)
         jsdd = np.mean(out['jsd'][:,-400:],axis=1)
         print(jsdd, np.mean(jsdd))
         stdd = np.std(out['jsd'][:,-400:],axis=1)
@@ -1179,8 +1273,8 @@ def normalize_matrix(m):
     return (m - mn) / (mx - mn) if mx > mn else np.zeros_like(m)
 
 if __name__ == "__main__":
-    runs_path = "runs_27_29/"
-
+    runs_path = "runs_inctot_race_witheld_FBDelphidriven/"
+    summarize_starting_predictions_by_combo(runs_path)
     if False: #analyzing target prediction runs aggregation
         target_var_tb_name = "RECVDVACC prediction"
         metric_tb_name = "jsd" #"Gen Entropy"
@@ -1204,6 +1298,6 @@ if __name__ == "__main__":
     
     elif False:
         all_results = load_autotune_dir(autotune_dir="./hyperparam_tuning/autotune_history/autoTuneDir_HHP_Phase4Only")
-    elif True:
-        new_stopping()
-        #save_pickle()
+    elif False:
+        #new_stopping()
+        save_pickle(runs_path)
