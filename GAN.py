@@ -161,6 +161,7 @@ class GAN():
         self.truth_sample_size = cfg['hparams']['subset_size']    
         self.data_type = dataset.type
 
+        self.gt_labels = dataset.gt_labels
         self.biased_labels = dataset.biased_labels  
         self.ground_truth_demographics = dataset.ground_truth_demographics 
 
@@ -584,8 +585,24 @@ class GAN():
     def measure_vaccine(self):
         self.generator.set_eval()
         weights = self.generator.get_weights(self.bias_dataset)
-        predicted_target = (weights @ self.biased_labels)
-        return predicted_target, weights
+        predicted_target = (weights @ self.biased_labels[:,0]).flatten()
+        weights_flat = weights.flatten()
+        distribution_match = 0
+        if self.gt_labels is not None:
+            gt_weights = self.gt_weights.cpu().numpy() if torch.is_tensor(self.gt_weights) else self.gt_weights
+            gt_weights_flat = gt_weights.flatten() / (gt_weights.sum() + 1e-12)
+            
+            js_dists = []
+            for nl in range(1, self.biased_labels.shape[1]):
+                categories = np.union1d(np.unique(self.biased_labels[:,nl]), np.unique(self.gt_labels[:,nl-1]))
+                p = np.array([weights_flat[self.biased_labels[:,nl] == cat].sum() for cat in categories])
+                p = p / p.sum()
+                q = np.array([gt_weights_flat[self.gt_labels[:,nl-1] == cat].sum() for cat in categories])
+                q = q / q.sum()
+                js_dists.append(jensenshannon(p, q))
+
+            distribution_match = np.array(js_dists)
+        return predicted_target, distribution_match, weights
 
     def measure_vaccine_batch(self):
         self.generator.set_eval()
@@ -739,19 +756,6 @@ class WGAN_GP(GAN):
               synthetic,
               synthetic_col_names = ""):
         
-        if False: #lr scheduler code
-            #lr scheduler for generator:
-            self.generator.min_lr = 1e-7
-            self.generator.reach_min_epoch = 100
-            gamma = np.exp(np.log(self.generator.min_lr / self.generator_starting_lr) / self.generator.reach_min_epoch)
-            self.generator_lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.generator_optimizer, gamma=gamma)
-
-            #lr scheduler for discminiator
-            self.discriminator.min_lr = 1e-9
-            reach_min_epoch = epochs - self.start_decay #(5 * epochs) // 10 #let it traing normally for first 50 epochs
-            gamma = np.exp(np.log(self.discriminator.min_lr / self.discriminator_starting_lr) / reach_min_epoch)
-            self.discriminator_lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.discriminator_optimizer, gamma=gamma)
-        
         prob_diffs = []
         generator_losses, discriminator_losses = [], []
         test_probs = []
@@ -779,18 +783,22 @@ class WGAN_GP(GAN):
                     jsd_history.append(jsd_loss.item())
                     writer.add_scalar('jsd', jsd_loss.item(), epoch)
 
-                    #probs = self.generator.get_weights(self.bias_dataset).flatten()
-                    #print(sum(probs[self.synthetic_label_1]),sum(probs[self.synthetic_label_2]))
-                    #pred = self.measure_vaccine_batch()
                     #writer.add_scalar('Vaccine prediction', pred, epoch)
                     if not synthetic:
-                        pred, _ = self.measure_vaccine()
+                        pred, dist_match,  _ = self.measure_vaccine()
                         pred_history.append(pred.item())
                         #weight_history.append(weights.flatten())
+                        
                         if len(pred.shape) == 1:
                             pred = np.expand_dims(pred,0)
-                        for pi in range(pred.shape[1]):
-                            writer.add_scalar(str(self.label_names[pi]) + ' prediction', pred[0,pi], epoch)
+                        writer.add_scalar(str(self.label_names[0]) + ' prediction', pred[0,0], epoch)
+
+                        if self.gt_labels is not None:
+                            if len(dist_match.shape) == 1:
+                                dist_match = np.expand_dims(dist_match,0)
+                            for pi, ln in enumerate(self.label_names[1:]):
+                                writer.add_scalar(str(ln) + ' prediction', dist_match[0,pi], epoch)
+
                         entropy = self.measure_entropy()
                         writer.add_scalar('Gen Entropy', entropy, epoch)
                         self.entropy_history.append(entropy)
