@@ -1,0 +1,58 @@
+SAVE_DICT:
+  SAVE_CRITIC: false
+  SAVE_DATASET: false
+  SAVE_EVERY: null
+  SAVE_GENERATOR: false
+  SAVE_IG: false
+  SAVE_WEIGHTS: false
+cartesian_product: false
+data:
+  bias_limit: 1000
+  dataset_name: household_pulse_compressed
+  gt_limit: 50000
+  label_information:
+    RECVDVACC: 0
+    EDUC: 2
+  weeks:
+    - '29'
+  columns_to_keep: null
+depricated:
+  KLIEP_downsample: -1
+  gen_history_length: 0
+  lambda_first_layer: 0
+  warmup_epochs: 0
+  wudur: 1
+device: cuda:0
+experimental_hparams: null
+hparams:
+  batch_size: 1
+  tf_batch_size: 9
+  disc_layers: [256, 256]
+  discriminator_dropout: 0.2
+  discriminator_type: deepSet
+  dlearningrate: 5.0e-05
+  gen_layers: [256, 256]
+  generator_dropout: 0.2
+  generator_type: deepSet
+  glearningrate: 1.0e-05
+  lambdaJSD: 5.0
+  lambdaadv: 1.0
+  lambdad: 25.0
+  lambdagp: 10.0
+  lambdaw: 0.0
+  subset_size: 128
+  tau: 0.1
+  temperature: 0.1
+  temperature_end: 0.1
+  temperature_start: 1.0
+rng:
+  mode: fully_random
+  seed: null
+training:
+  NUM_TRIALS: 1
+  dtrainingfactor: 8
+  epochs: 600
+  gtrainingfactor: 1
+  save_dir: ''
+  save_every: null
+  trial_id: 0
