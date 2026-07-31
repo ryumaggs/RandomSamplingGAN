@@ -52,11 +52,9 @@ if DEBUG_MODE:
     BIAS_LIMIT = 5
     NUM_TRIALS = 1
 '''
-cfg = load_config('./configs/default_config.yaml')
-data_cfg = load_config('./configs/all_datasets.yaml')
-device = torch.device(cfg['device'])
 
-if __name__ == "__main__":
+
+def run_experiments(cfg, data_cfg):
     weeks = cfg['data']['weeks']
     SAVE_DICT = cfg['SAVE_DICT']
     NUM_TRIALS = cfg['training']['NUM_TRIALS']
@@ -71,7 +69,7 @@ if __name__ == "__main__":
                 print(f"Directory '{main_dir}' created.")
             else:
                 print(f"Directory '{main_dir}' already exists.")
-        
+
         if cfg['experimental_hparams'] is not None:
             list_var_updates = cartesian_product_hyperparams(cfg['experimental_hparams'],
                                                     product=cfg['cartesian_product'])
@@ -97,12 +95,13 @@ if __name__ == "__main__":
                     local_cfg['hparams'][v] = v_val
                 hparams=local_cfg['hparams']
                 trainingparams=local_cfg['training']
-                    
-                d = Dataset.build_dataset(local_cfg, 
+
+                d = Dataset.build_dataset(local_cfg,
                                         data_cfg,
                                         rngs,
-                                        week, 
+                                        week,
                                         device,)
+
                 gan = WGAN_GP(
                             rngs=rngs,
                             dataset=d,
@@ -115,17 +114,17 @@ if __name__ == "__main__":
                     writer = SummaryWriter(comment='Variables=' + str(d.column_names) + '||Cell=' + str(d.upscaled_cell)+'||seed:'+str(rngs['seed_bias']))
                 else: #non synthetic data experiments
                     writer = SummaryWriter(comment='iter: ' + str(tid) + '||Week='+week+'||VAR = '+str(var_update)+
-                                        '||seed:'+str(rngs['seed_bias']))
-                
+                                        '||seed:'+str(rngs['seed_bias'])+'||labels:'+str(d.label_names))
+
                 for key, item in hparams.items():
                     if isinstance(item, list):
                         hparams[key] = str(hparams[key])
-                
+
                 writer.add_hparams(hparams,{})
                 c_names = ""
                 if week == "Syn":
                     c_names = d.column_names
-                
+
                 _ = gan.train(trainingparams['epochs'],
                             trainingparams['gtrainingfactor'],
                             trainingparams['dtrainingfactor'],
@@ -134,4 +133,91 @@ if __name__ == "__main__":
                             synthetic=(week=='Syn'),
                             synthetic_col_names=c_names)
                 writer.close()
-        
+
+
+def run_target_variable_sweep(cfg, data_cfg, column_indexes, num_runs=10):
+    '''
+    For each (variable_name -> column_index) pair in column_indexes, run
+    num_runs experiments with that column added as an additional target
+    variable alongside RECVDVACC (which is always predicted, at index 0).
+    '''
+    discovery_cfg = copy.deepcopy(cfg)
+    discovery_cfg['data']['label_information'] = {'RECVDVACC': 0}
+    discovery_rngs = build_rngs(discovery_cfg, device=device)
+    discovery_week = str(discovery_cfg['data']['weeks'][0])
+    discovery_dataset = Dataset.build_dataset(discovery_cfg, data_cfg, discovery_rngs, discovery_week, device)
+    valid_columns = set(discovery_dataset.feature_columns)
+    unknown_columns = [c for c in column_indexes if c not in valid_columns]
+    assert not unknown_columns, f"column_indexes has columns not present in the biased dataset: {unknown_columns}"
+
+    for column, column_index in column_indexes.items():
+        if column == 'RECVDVACC':
+            continue
+        cfg['data']['label_information'] = {'RECVDVACC': 0, column: column_index}
+        cfg['training']['NUM_TRIALS'] = num_runs
+        print(cfg['data']['label_information'])
+        run_experiments(cfg, data_cfg)
+
+
+def run_multi_target_experiment(cfg, data_cfg, column_indexes, num_runs=10):
+    '''
+    Runs a single batch of num_runs experiments with RECVDVACC (always index 0)
+    plus every variable in column_indexes as additional target variables at
+    once, rather than sweeping one variable at a time like
+    run_target_variable_sweep does.
+    '''
+    discovery_cfg = copy.deepcopy(cfg)
+    discovery_cfg['data']['label_information'] = {'RECVDVACC': 0}
+    discovery_rngs = build_rngs(discovery_cfg, device=device)
+    discovery_week = str(discovery_cfg['data']['weeks'][0])
+    discovery_dataset = Dataset.build_dataset(discovery_cfg, data_cfg, discovery_rngs, discovery_week, device)
+    valid_columns = set(discovery_dataset.feature_columns)
+    unknown_columns = [c for c in column_indexes if c != 'RECVDVACC' and c not in valid_columns]
+    assert not unknown_columns, f"column_indexes has columns not present in the biased dataset: {unknown_columns}"
+
+    label_information = {'RECVDVACC': 0}
+    for column, column_index in column_indexes.items():
+        if column == 'RECVDVACC':
+            continue
+        label_information[column] = column_index
+
+    cfg['data']['label_information'] = label_information
+    cfg['training']['NUM_TRIALS'] = num_runs
+    print(cfg['data']['label_information'])
+    run_experiments(cfg, data_cfg)
+
+cfg = load_config('./configs/HHP_compressed.yaml')
+data_cfg = load_config('./configs/all_datasets.yaml')
+device = torch.device(cfg['device'])
+
+
+if __name__ == "__main__":
+    # map each additional target variable to the column index it should occupy
+    # alongside RECVDVACC (index 0) in label_information
+    '''
+    column_indexes = {
+        'REGION': 1,
+        'EDUC': 2,
+        'INCTOT': 3,
+        'SEX': 4,
+        'MARST': 5,
+        'RACE': 6,
+        'AGE': 7
+    }
+    run_target_variable_sweep(cfg, data_cfg, column_indexes, num_runs=10)
+
+    '''
+    '''
+    column_indexes = {
+        'INCTOT': 3,
+        'MARST': 5,
+        'RACE': 6,
+    }
+    '''
+    #column_indexes = {}
+    column_indexes = {
+        'MARST': 5,
+        'RACE': 6,
+    }
+    run_multi_target_experiment(cfg, data_cfg, column_indexes)
+
