@@ -12,14 +12,10 @@ data:
   gt_limit: 50000
   label_information:
     RECVDVACC: 0
+    EDUC: 2
   weeks:
-    - '23'
-    - '24'
-    - '25'
-    - '26'
-    - '27'
-    - '28'
     - '29'
+  columns_to_keep: null
 depricated:
   KLIEP_downsample: -1
   gen_history_length: 0
@@ -53,7 +49,7 @@ rng:
   mode: fully_random
   seed: null
 training:
-  NUM_TRIALS: 10
+  NUM_TRIALS: 1
   dtrainingfactor: 8
   epochs: 600
   gtrainingfactor: 1
