@@ -12,6 +12,44 @@ from util import dict2vector, normalize_to_minus1_plus1, embed_data
 from data_processing.DataProcessing import *
 from data_processing.HouseholdCensusDataProcessing import *
 
+def compress_csv_to_unique_rows(df):
+    '''
+    df - pd.DataFrame - categorical data whose first column is the target variable.
+
+    For every unique combination of the non-target columns, averages the target
+    column over the individuals sharing that combination and adds a PERWT column
+    with each unique row's share of the original data set (sums to 1).
+    '''
+    target_col = df.columns[0]
+    feature_cols = list(df.columns[1:])
+
+    compressed = df.groupby(feature_cols, as_index=False, dropna=False).agg(
+        **{target_col: (target_col, 'mean')},
+        PERWT=(target_col, 'size'),
+    )
+    compressed['PERWT'] = compressed['PERWT'] / len(df)
+    compressed = compressed[[target_col] + feature_cols + ['PERWT']]
+    return compressed
+
+def compress_directory_csvs_to_unique_rows(dir_path):
+    '''
+    Compresses every csv file directly inside dir_path via compress_csv_to_unique_rows,
+    writing each result alongside the original as "<original_name>_compressed.csv".
+    '''
+    dir_path = Path(dir_path)
+    csv_paths = sorted(p for p in dir_path.glob('*.csv') if not p.stem.endswith('_compressed'))
+    for csv_path in csv_paths:
+        df = pd.read_csv(csv_path)
+        if 'PERWT' in df.columns:
+            print(f"{csv_path.name}: already has PERWT, skipping")
+            continue
+        compressed = compress_csv_to_unique_rows(df)
+        out_path = csv_path.with_name(csv_path.stem + '_compressed' + csv_path.suffix)
+        compressed.to_csv(out_path, index=False)
+        print(f"{csv_path.name}: {len(df)} rows -> {len(compressed)} unique rows ({out_path.name})")
+
+if __name__ == "__main__":
+    compress_directory_csvs_to_unique_rows('./data/censusHouseholdPulse_data/cleaned/')
 class XBoxDatasetSimulation():
     def __init__(self,
                  dataset_path=None,
@@ -85,28 +123,29 @@ class HouseholdPulse_dataset():
                  columns_to_keep = None,
                  gt_limit = 5000,
                  bias_limit = 1000, ):
+        
         self.type = 'real'
         self.device = device
         self.gt_limit = gt_limit
         self.bias_limit = bias_limit
         self.label_names = list(label_information.keys())
-
         self.label_indexes = list(label_information.values())
+
         self.num_labels = len(label_information)
         raw_bias_load = self.load_csv(bias_path)#.to_numpy(dtype=np.float, na_value=0)
         raw_gt_load = self.load_csv(ground_truth_path)
-        self.embedding_dict = self.create_embedding_dictionary(raw_gt_load)
         self.num_categories_per_features = [raw_gt_load[col].nunique() for col in raw_gt_load.columns]
         self.num_categories_per_features = self.num_categories_per_features[1:]
-        self.ground_truth_dataset, self.gt_weights, self.biased_dataset, self.biased_labels = self.load_data_with_rngs(
+        self.ground_truth_dataset, self.gt_weights, self.gt_labels, self.biased_dataset, self.biased_labels, self.extra_bias_names = self.load_data_with_rngs(
                                                                         columns_to_keep,
                                                                         raw_bias_load,
                                                                         bias_limit,
                                                                         raw_gt_load,
                                                                         gt_limit,
                                                                         rngs)
+        self.embedding_dict = self.create_embedding_dictionary(raw_gt_load[self.feature_columns])
         del raw_gt_load
-        del raw_bias_load 
+        del raw_bias_load
         self.synthetic_label_1 = None
         self.synthetic_label_2 = None
         self.var_setup()
@@ -190,35 +229,49 @@ class HouseholdPulse_dataset():
                             gt_limit,
                             rngs):
         if columns_to_keep is not None:
-            census_columns_to_keep = ['PERWT']
-            census_columns_to_keep.extend(list(columns_to_keep))
-            gtd = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rngs['seed_gt'])[census_columns_to_keep].to_numpy(dtype=np.float, na_value=0)
-            survey_columns_to_keep = ['HLTHINS1'] #HLTHINS1 or RECVDVACC
-            survey_columns_to_keep.extend(list(columns_to_keep))
-            if bias_limit >= raw_bias_load.shape[0]:
-                bd = raw_bias_load[survey_columns_to_keep].to_numpy(dtype=np.float, na_value=0)
-            else:
-                bd = raw_bias_load.sample(n=bias_limit,random_state=rngs['seed_bias'])[survey_columns_to_keep].to_numpy(dtype=np.float, na_value=0)
-        else:
-            gtd = None
-            if gt_limit < raw_gt_load.shape[0]:
-                gtd = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rngs['seed_gt'])
-            else:
-                gtd = raw_gt_load
-            gtd = gtd.to_numpy(dtype=np.float, na_value=0)
-            
-            if bias_limit > raw_bias_load.shape[0]:
-                bd = raw_bias_load.to_numpy(dtype=np.float, na_value=0)
-            else:
-                bd = raw_bias_load.sample(n=bias_limit,random_state=rngs['seed_bias'])
-                bd = bd.to_numpy(dtype=np.float, na_value=0)
+            keep_set = set(columns_to_keep) | set(self.label_names) | {'PERWT'}
+            raw_gt_load = raw_gt_load[[c for c in raw_gt_load.columns if c in keep_set]]
+            raw_bias_load = raw_bias_load[[c for c in raw_bias_load.columns if c in keep_set]]
 
-            bl = bd[:,self.label_indexes]
-            for nl in range(self.num_labels):
-                print("uniform avg target: ", sum(bl[:,nl])/len(bl[:,nl]))
-            
-            print(gtd.shape, bd.shape, bl.shape)
-        return gtd[:,1:], gtd[:,0], bd[:,self.num_labels:], bl
+        # labels may or may not be present in raw_gt_load; raw_bias_load always has them
+        gt_label_columns = [c for c in self.label_names if c in raw_gt_load.columns]
+        bias_label_columns = [c for c in self.label_names if c in raw_bias_load.columns]
+
+        gt_feature_columns = [c for c in raw_gt_load.columns if c != 'PERWT' and c not in gt_label_columns]
+        bias_feature_columns = [c for c in raw_bias_load.columns if c not in bias_label_columns]
+
+        # gt_data/bias_data only ever contain columns both frames have, in the same order
+        shared_feature_columns = [c for c in bias_feature_columns if c in gt_feature_columns]
+        extra_bias_names = [c for c in bias_feature_columns if c not in gt_feature_columns]
+        self.feature_columns = shared_feature_columns
+
+        if gt_limit < raw_gt_load.shape[0]:
+            gt_sample = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rngs['seed_gt'])
+        else:
+            gt_sample = raw_gt_load
+        gt_col_index = {c: i for i, c in enumerate(gt_sample.columns)}
+        gt_np = gt_sample.to_numpy(dtype=np.float, na_value=0)
+        gt_weights = gt_np[:,gt_col_index['PERWT']]
+        gt_data = gt_np[:,[gt_col_index[c] for c in shared_feature_columns]]
+        gt_labels = gt_np[:,[gt_col_index[c] for c in gt_label_columns]] if gt_label_columns else None
+        
+        if bias_limit > raw_bias_load.shape[0]:
+            bias_sample = raw_bias_load
+        else:
+            bias_sample = raw_bias_load.sample(n=bias_limit,random_state=rngs['seed_bias'])
+        bias_col_index = {c: i for i, c in enumerate(bias_sample.columns)}
+        bias_np = bias_sample.to_numpy(dtype=np.float, na_value=0)
+        bias_data = bias_np[:,[bias_col_index[c] for c in shared_feature_columns]]
+        bias_labels = bias_np[:,[bias_col_index[c] for c in bias_label_columns]]
+
+        #for i, c in enumerate(shared_feature_columns):
+        #    print(f"{i}, gt_data[{c}] range: [{gt_data[:,i].min()}, {gt_data[:,i].max()}]  "
+        #          f"bias_data[{c}] range: [{bias_data[:,i].min()}, {bias_data[:,i].max()}]")
+        #exit(1)
+        for nl in range(bias_labels.shape[1]):
+            print("uniform avg target: ", sum(bias_labels[:,nl])/len(bias_labels[:,nl]))
+
+        return gt_data, gt_weights, gt_labels, bias_data, bias_labels, extra_bias_names
     
     def create_combination_id_mapping(self,np1, np2):
         #convert both to pandas df
@@ -262,6 +315,61 @@ class HouseholdPulse_dataset():
             exit(1)
         
         return df
+
+class HouseholdPulse_compressed(HouseholdPulse_dataset):
+    '''
+    Same as HouseholdPulse_dataset, but for bias/survey data that has been run through
+    compress_csv_to_unique_rows: each row is a unique demographic combination (with its
+    target already averaged) rather than one row per respondent, weighted by PERWT.
+    '''
+    def load_data_with_rngs(self,
+                            columns_to_keep,
+                            raw_bias_load,
+                            bias_limit,
+                            raw_gt_load,
+                            gt_limit,
+                            rngs):
+        if columns_to_keep is not None:
+            keep_set = set(columns_to_keep) | set(self.label_names) | {'PERWT'}
+            raw_gt_load = raw_gt_load[[c for c in raw_gt_load.columns if c in keep_set]]
+            raw_bias_load = raw_bias_load[[c for c in raw_bias_load.columns if c in keep_set]]
+
+        # labels may or may not be present in raw_gt_load; raw_bias_load always has them
+        gt_label_columns = [c for c in self.label_names if c in raw_gt_load.columns]
+        bias_label_columns = [c for c in self.label_names if c in raw_bias_load.columns]
+
+        gt_feature_columns = [c for c in raw_gt_load.columns if c != 'PERWT' and c not in gt_label_columns]
+        bias_feature_columns = [c for c in raw_bias_load.columns if c != 'PERWT' and c not in bias_label_columns]
+
+        # gt_data/bias_data only ever contain columns both frames have, in the same order
+        shared_feature_columns = [c for c in bias_feature_columns if c in gt_feature_columns]
+        extra_bias_names = [c for c in bias_feature_columns if c not in gt_feature_columns]
+        self.feature_columns = shared_feature_columns
+
+        if gt_limit < raw_gt_load.shape[0]:
+            gt_sample = raw_gt_load.sample(n=gt_limit,weights=raw_gt_load['PERWT'],random_state=rngs['seed_gt'])
+        else:
+            gt_sample = raw_gt_load
+        gt_col_index = {c: i for i, c in enumerate(gt_sample.columns)}
+        gt_np = gt_sample.to_numpy(dtype=np.float, na_value=0)
+        gt_weights = gt_np[:,gt_col_index['PERWT']]
+        gt_data = gt_np[:,[gt_col_index[c] for c in shared_feature_columns]]
+        gt_labels = gt_np[:,[gt_col_index[c] for c in gt_label_columns]] if gt_label_columns else None
+
+        # compressed bias data is already one row per unique demographic combination,
+        # so bias_limit is ignored and the full table is always used
+        bias_sample = raw_bias_load
+        bias_col_index = {c: i for i, c in enumerate(bias_sample.columns)}
+        bias_np = bias_sample.to_numpy(dtype=np.float, na_value=0)
+        bias_data = bias_np[:,[bias_col_index[c] for c in shared_feature_columns]]
+        bias_labels = bias_np[:,[bias_col_index[c] for c in bias_label_columns]]
+        bias_weights = bias_np[:,bias_col_index['PERWT']]
+
+        # each row here is a unique demographic combination, not a respondent, so the
+        # per-individual average must be reconstructed by weighting rows by PERWT
+        for nl in range(bias_labels.shape[1]):
+            print("uniform avg target: ", np.average(bias_labels[:,nl], weights=bias_weights))
+        return gt_data, gt_weights, gt_labels, bias_data, bias_labels, extra_bias_names
 
 class Axios_ipsosdataset(HouseholdPulse_dataset):
     def dummy(self):
@@ -777,6 +885,7 @@ CLASS_REGISTRY = {
     'D4P_dataset': D4P_dataset,
     'HouseholdPulse_dataset': HouseholdPulse_dataset,
     'HouseholdPulse_synthetic': HouseholdPulse_synthetic,
+    'HouseholdPulse_compressed': HouseholdPulse_compressed,
 }
 
 def build_dataset(cfg, 
@@ -807,6 +916,7 @@ def build_dataset(cfg,
     )
 
     if dataset_name != 'household_pulse_synthetic':
-        kwargs.update(label_information={'RECVDVACC': 0}, columns_to_keep=None)
+        kwargs.update(label_information=cfg['data']['label_information'], columns_to_keep=None)
 
     return cls(**kwargs)
+
