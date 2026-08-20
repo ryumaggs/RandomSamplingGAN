@@ -186,7 +186,7 @@ def run_multi_target_experiment(cfg, data_cfg, column_indexes, num_runs=10):
     print(cfg['data']['label_information'])
     run_experiments(cfg, data_cfg)
 
-cfg = load_config('./configs/HHP_compressed.yaml')
+cfg = load_config('./configs/HHP_default.yaml')
 data_cfg = load_config('./configs/all_datasets.yaml')
 device = torch.device(cfg['device'])
 
@@ -194,6 +194,9 @@ device = torch.device(cfg['device'])
 if __name__ == "__main__":
     # map each additional target variable to the column index it should occupy
     # alongside RECVDVACC (index 0) in label_information
+    run_experiments(cfg, data_cfg)
+
+    exit(1)
     '''
     column_indexes = {
         'REGION': 1,
