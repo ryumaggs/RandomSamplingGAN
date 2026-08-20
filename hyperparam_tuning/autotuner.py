@@ -309,9 +309,10 @@ if __name__ == "__main__":
     from run_experiment import load_config
     from Dataset import D4P_dataset, HouseholdPulse_dataset
 
+    
     for week in range(29,30):
         w = str(week)
-        cfg = load_config(BASE_DIR / 'configs' / 'default_config.yaml')
+        cfg = load_config(BASE_DIR / 'configs' / 'HHP_compressed.yaml')
         data_cfg = load_config(BASE_DIR / 'configs' / 'all_datasets.yaml')
         cfg['data']['weeks'] = [w]
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -345,6 +346,6 @@ if __name__ == "__main__":
             }
             tune_results = all_tuned_results[w]
         #analysis
-        num_experiments = 15
+        num_experiments = 3
         analysis_rngs = [run_experiment.build_rngs(cfg["rng"], device) for _ in range(num_experiments)]
         analysis(tune_results, cfg, data_cfg, analysis_rngs, device)

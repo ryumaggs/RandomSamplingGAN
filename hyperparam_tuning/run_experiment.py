@@ -57,9 +57,9 @@ def build_rngs(rng_cfg: dict, device):
         raise ValueError(f"Unknown rng mode: '{mode}'")
 
 def run(cfg: dict,
-            dataset: object,
-            rngs: object,
-            phase: int = 0):
+        dataset: object,
+        rngs: object,
+        phase: int = 0):
     """
     Load datasets, instantiate WGAN_GP, run training, and return results.
 
@@ -81,35 +81,23 @@ def run(cfg: dict,
         Used by the tuner to assess convergence.
     """
     hp = cfg["hparams"]
+    trial_dir = ""
+    SAVE_DICT = cfg['SAVE_DICT']
+    if any(SAVE_DICT.values()):
+        trial_dir = os.path.join(main_dir,"trial:"+str(tid))
+        if not os.path.exists(trial_dir):
+            os.makedirs(trial_dir)
+            print(f"Directory '{trial_dir}' created.")
+        else:
+            print(f"Directory '{trial_dir}' already exists.")
 
     # ── 2. Instantiate WGAN_GP ────────────────────────────────────────────────
     gan = WGAN_GP(
-        rngs=rngs,
-        dataset=dataset,
-        generator_type='deepSet',
-        discriminator_type='deepSet',
-        gen_learning_rate=hp["glearningrate"],
-        disc_learning_rate=hp["dlearningrate"],
-        batch_size=hp["batch_size"],
-        truth_sample_size=hp["subset_size"],
-        gen_layers=hp["gen_layers"],
-        disc_layers=hp["disc_layers"],
-        bias_sample_size=hp["subset_size"],
-        lambda_gp=hp["lambdagp"],
-        lambda_weights=hp["lambdaw"],
-        lambda_demo=hp["lambdad"],
-        lambda_JSD=hp["lambdaJSD"],
-        gen_history_length=0,
-        temperature=hp["tau"],
-        warmup_length=0,
-        lambda_regularizer=0,
-        lambda_first_layer=0,
-        generator_dropout=hp["generator_dropout"],
-        discriminator_dropout=hp["discriminator_dropout"],
-        KLIEP_downsample=-1,
-        save_dict=cfg.get("save_dict", {}),
-        save_dir=cfg.get("save_dir", ""),
-    )
+                rngs=rngs,
+                dataset=dataset,
+                cfg=cfg,
+                save_dir = trial_dir,
+            )
 
     # ── 3. Tensorboard writer ─────────────────────────────────────────────────
     run_comment = f"phase={phase}||lambdaJSD={hp['lambdaJSD']}||lambdad={hp['lambdad']}||lambdaw={hp['lambdaw']}||seed:{rngs['seed_bias']}"
