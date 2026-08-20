@@ -227,7 +227,8 @@ class HouseholdPulse_dataset():
                             bias_limit,
                             raw_gt_load,
                             gt_limit,
-                            rngs):
+                            rngs,
+                            aggregate_bias = True):
         if columns_to_keep is not None:
             keep_set = set(columns_to_keep) | set(self.label_names) | {'PERWT'}
             raw_gt_load = raw_gt_load[[c for c in raw_gt_load.columns if c in keep_set]]
@@ -262,7 +263,11 @@ class HouseholdPulse_dataset():
         bias_col_index = {c: i for i, c in enumerate(bias_sample.columns)}
         bias_np = bias_sample.to_numpy(dtype=np.float, na_value=0)
         bias_data = bias_np[:,[bias_col_index[c] for c in shared_feature_columns]]
-        bias_labels = bias_np[:,[bias_col_index[c] for c in bias_label_columns]]
+        if aggregate_bias:
+            avg_labels = raw_bias_load.groupby(bias_feature_columns, dropna=False)[bias_label_columns].transform('mean')
+            bias_labels = avg_labels.loc[bias_sample.index].to_numpy(dtype=np.float64)
+        else:
+            bias_labels = bias_np[:,[bias_col_index[c] for c in bias_label_columns]]
 
         #for i, c in enumerate(shared_feature_columns):
         #    print(f"{i}, gt_data[{c}] range: [{gt_data[:,i].min()}, {gt_data[:,i].max()}]  "
