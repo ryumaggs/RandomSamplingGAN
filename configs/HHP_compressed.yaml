@@ -12,7 +12,6 @@ data:
   gt_limit: 50000
   label_information:
     RECVDVACC: 0
-    EDUC: 2
   weeks:
     - '29'
   columns_to_keep: null

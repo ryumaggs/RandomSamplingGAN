@@ -7,15 +7,22 @@ SAVE_DICT:
   SAVE_WEIGHTS: false
 cartesian_product: false
 data:
-  bias_limit: 1000
+  bias_limit: 20000
   dataset_name: household_pulse
   gt_limit: 50000
   label_information:
     RECVDVACC: 0
-    EDUC: 2
   weeks:
     - '29'
   columns_to_keep: null
+training:
+  NUM_TRIALS: 1
+  dtrainingfactor: 8
+  epochs: 600
+  gtrainingfactor: 1
+  save_dir: ''
+  save_every: null
+  trial_id: 0
 depricated:
   KLIEP_downsample: -1
   gen_history_length: 0
@@ -48,11 +55,4 @@ hparams:
 rng:
   mode: fully_random
   seed: null
-training:
-  NUM_TRIALS: 1
-  dtrainingfactor: 8
-  epochs: 600
-  gtrainingfactor: 1
-  save_dir: ''
-  save_every: null
-  trial_id: 0
+
