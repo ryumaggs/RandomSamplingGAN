@@ -387,47 +387,37 @@ class GAN():
         Returns:
             Scalar KLIEP loss (to minimize)
         """
-        w = self.generator.get_weights_regularizer(self.bias_dataset).T.squeeze()
-
-        X = self.unscaled_biased
-        Y_whole = self.unscaled_ground_truth
         K = self.KLIEP_downsample
+
+        X_probs = self.generator.get_weights_regularizer(self.bias_dataset).T.squeeze()
+        X = self.unscaled_biased
+
+        Y = self.unscaled_ground_truth
         Y_probs = self.gt_weights / self.gt_weights.sum()
-        Y_probs = Y_probs.to(self.device)
-        if K == -1:
-            Y = Y_whole
-        else:
-            # Sample K rows from Y_whole according to Y_probs
-            indices = torch.multinomial(Y_probs, num_samples=K, replacement=True, generator=self.rngs['torch'])
-            Y = Y_whole[indices]
+        Y_probs = Y_probs.to(self.device).to(torch.float32)
 
         # Compare each Y_j row with all X_i rows
         # indicator[i,j] = 1 if X[i] == Y[j] across all variables
         # Shape: (m, n)
-         
         if False:
-            #exact matching
-            indicator = (Y.unsqueeze(1) == X.unsqueeze(0)).all(dim=2).float()  # shape (m, n)
-            p_hat = torch.matmul(indicator, w)  # shape (m,)
-
-            # Fraction of Y rows that have at least one matching X row
-            #coverage_Y = (indicator.sum(dim=1) > 0).float().mean()
-            # Fraction of X rows that have at least one matching Y row
-            #coverage_X = (indicator.sum(dim=0) > 0).float().mean()
-        else:
-            #partial matching
             similarity = (Y.unsqueeze(1) == X.unsqueeze(0)).float().mean(dim=2)  # fraction of variables that match
             # Weighted sum over X for each Y_j
-            p_hat = torch.matmul(similarity, w)  # shape (m,)
+            p_hat = torch.matmul(similarity, X_probs)  # shape (m,)
 
-        # Avoid log(0)
-        p_hat = p_hat + eps
-
-        if K == -1:
+            # Avoid log(0)
+            p_hat = p_hat + eps
             loss = -(Y_probs * torch.log(p_hat)).sum()
-        else:
-            # KLIEP loss
-            loss = - torch.mean(torch.log(p_hat))
+        def kliep_loss(X, Y, X_probs, Y_probs, eps=1e-12, chunk=256):
+            m = Y.shape[0]
+            total = 0.0
+            for i in range(0, m, chunk):
+                yb = Y[i:i+chunk]                                          # (b, d)
+                yp = Y_probs[i:i+chunk]                                    # (b,)
+                sim = (yb.unsqueeze(1) == X.unsqueeze(0)).float().mean(2)  # (b, n) transient
+                p = sim @ X_probs + eps                                    # (b,)
+                total = total + (yp * torch.log(p)).sum()
+            return -total
+        loss = kliep_loss(X, Y, X_probs, Y_probs)
 
         return loss
 
@@ -707,13 +697,15 @@ class WGAN_GP(GAN):
                     self.generator.set_eval()
                     tvd_loss = self.L_KLIEP() #self.get_JSD_loss()
                     jsd_loss = self.get_JSD_loss(printt=False)
-                    pred, _ = self.measure_vaccine()
+                    pred, _, _ = self.measure_vaccine()
                     entropy = self.measure_entropy()
                     reg_loss = self.get_reg_loss()
 
                     #write to tensorbaord
                     writer.add_scalar('tvd', tvd_loss.item(), epoch)
                     writer.add_scalar('jsd', jsd_loss.item(), epoch)
+                    if len(pred.shape) == 1:
+                        pred = np.expand_dims(pred,0)
                     for pi in range(pred.shape[1]):
                         writer.add_scalar(str(self.label_names[pi]) + ' prediction', pred[0,pi], epoch)
                     writer.add_scalar('Gen Entropy', entropy, epoch)
@@ -818,9 +810,7 @@ class WGAN_GP(GAN):
                                                                                                                           discriminator_training_factor=temp_disc_training_factor,
                                                                                                                           epoch=epoch,
                                                                                                                           total_epoch = epochs)
-            #self.compute_input_gradient_generator()
-            #self.compute_input_gradient_disc()
-            #exit(1)
+
 
             #if epoch >= 2 and not synthetic:
             #    writer.add_scalar('weight l2 hist', np.linalg.norm(weight_history[-1]-weight_history[-2],ord=2),epoch)
@@ -983,11 +973,7 @@ class WGAN_GP(GAN):
                             + self.lambda_jsd * demo_loss2
         else:
             generator_loss = self.lambda_jsd * demo_loss2 #+ self.lambda_demo * demo_loss
-        #print(self.lambda_first_layer * first_l1)
-        #print("values below T=0.1", (self.generator.phi[0].weight < 0.1).sum().item())
-        #print(bias_loss.item(), self.lambda_demo * demo_loss)
-        #exit(1)
-        #print(generator_loss)
+
 
         if False:
             with torch.no_grad():
