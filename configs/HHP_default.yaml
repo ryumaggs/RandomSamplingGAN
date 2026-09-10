@@ -7,7 +7,7 @@ SAVE_DICT:
   SAVE_WEIGHTS: false
 cartesian_product: false
 data:
-  bias_limit: 20000
+  bias_limit: 10000
   dataset_name: household_pulse
   gt_limit: 50000
   label_information:
@@ -30,7 +30,7 @@ depricated:
   warmup_epochs: 0
   wudur: 1
 device: cuda:0
-experimental_hparams: null
+experimental_hparams: {}
 hparams:
   batch_size: 1
   tf_batch_size: 9
@@ -42,7 +42,7 @@ hparams:
   generator_dropout: 0.2
   generator_type: deepSet
   glearningrate: 1.0e-05
-  lambdaJSD: 5.0
+  lambdaJSD: 50.0
   lambdaadv: 1.0
   lambdad: 25.0
   lambdagp: 10.0

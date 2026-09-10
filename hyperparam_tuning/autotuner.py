@@ -23,7 +23,9 @@ import torch
 
 import Dataset
 
-JSD_MAX = 0.07
+JSD_MAX = 0.075
+P2_JSD_MAX = 0.1
+NUM_TRIALS = 9
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def final_quarter_mean(jsd_history):
@@ -71,7 +73,7 @@ def phase2_should_stop(history, first_q_history_2, history_2):
     -------
     bool
     """
-    if history[-1] > JSD_MAX: #and first_q_history_2[-1] > history_2[-1]:
+    if history[-1] > P2_JSD_MAX: #and first_q_history_2[-1] > history_2[-1]:
         return True, first_q_history_2[-1] > history_2[-1]
     else:
         return False, False
@@ -82,6 +84,8 @@ def _setup_logger(run_dir):
     log_path = os.path.join(run_dir, "autotuneLogger.txt")
     logger = logging.getLogger("autotuner")
     logger.setLevel(logging.INFO)
+    for h in logger.handlers:
+        h.close()
     logger.handlers.clear()
     fh = logging.FileHandler(log_path)
     fh.setFormatter(logging.Formatter("%(asctime)s  %(message)s", datefmt="%H:%M:%S"))
@@ -92,7 +96,7 @@ def _setup_logger(run_dir):
 # ── Main tuning loop ──────────────────────────────────────────────────────────
 
 def autotune(param_ranges, cfg, dataset, rngs,
-             skip_mode=False):
+             skip_mode=False, run_dir=None):
     """
     Run the two-phase sequential tuning procedure.
 
@@ -112,6 +116,11 @@ def autotune(param_ranges, cfg, dataset, rngs,
     skip_mode: bool - only used to in testing of phase 4 (analysis)
         will set up directories and log files but will not run any
         actual experiments (all "best" values are pre-set in this mode)
+    run_dir: Path or None
+        Directory to write autotuneLogger.txt and tensorboard runs/ into.
+        If None, a fresh timestamped directory is created under
+        hyperparam_tuning/autoTuneDir. Callers looping over multiple trials
+        should pass a distinct run_dir per trial to keep telemetry isolated.
     Returns
     -------
     results : dict  {param_name: best_value}
@@ -121,12 +130,13 @@ def autotune(param_ranges, cfg, dataset, rngs,
     (p3_name, (p3_init, p3_end, p3_step)) = param_ranges.items()
 
     # ── Directory setup ───────────────────────────────────────────────────────
-    base_dir = BASE_DIR / "hyperparam_tuning" / "autoTuneDir"
-    os.makedirs(base_dir, exist_ok=True)
+    if run_dir is None:
+        base_dir = BASE_DIR / "hyperparam_tuning" / "autoTuneDir"
+        os.makedirs(base_dir, exist_ok=True)
 
-    dataset_stem = cfg['data']['dataset_name']
-    run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + f"_{dataset_stem}"
-    run_dir = base_dir / run_name
+        dataset_stem = cfg['data']['dataset_name']
+        run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + f"_{dataset_stem}"
+        run_dir = base_dir / run_name
     os.makedirs(run_dir, exist_ok=True)
 
     log = _setup_logger(run_dir)
@@ -137,12 +147,15 @@ def autotune(param_ranges, cfg, dataset, rngs,
     log.info(f"  {p1_name}: init={p1_init}, end={p1_end}, step={p1_step}")
     log.info(f"  {p2_name}: init={p2_init}, end={p2_end}, step={p2_step}")
 
+    cfg['hparams'][p1_name] = p1_init
+    cfg['hparams'][p2_name] = p2_init
+
     if not skip_mode:
         # ── Phase 1: tune p1_name ─────────────────────────────────────────────────
         log.info(f"=== Phase 1: tuning {p1_name} ===")
         p1_val        = p1_init
         p1_fq_history = []
-        p2_fixed      = 0.0
+        p2_fixed      = p2_init
         while p1_val <= p1_end + 1e-9:
             
             log.info(f"  Running: {p1_name}={p1_val:.4f}, {p2_name}={p2_fixed:.4f}")
@@ -316,36 +329,37 @@ if __name__ == "__main__":
         data_cfg = load_config(BASE_DIR / 'configs' / 'all_datasets.yaml')
         cfg['data']['weeks'] = [w]
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        rngs = run_experiment.build_rngs(cfg["rng"], device)
-        if True:
-            d = Dataset.build_dataset(cfg, 
+
+        dataset_stem = cfg['data']['dataset_name']
+        batch_dir = (BASE_DIR / "hyperparam_tuning" / "autoTuneDir" /
+                     (datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + f"_{dataset_stem}"))
+        os.makedirs(batch_dir, exist_ok=False)
+
+        for trial_idx in range(NUM_TRIALS):
+            trial_dir = batch_dir / f"trial_{trial_idx}"
+            os.makedirs(trial_dir, exist_ok=False)
+
+            rngs = run_experiment.build_rngs(cfg["rng"], device)
+            d = Dataset.build_dataset(cfg,
                                         data_cfg,
                                         rngs,
-                                        w, 
+                                        w,
                                         device,)
 
-            #autotune(param_ranges, cfg, dataset, rngs)
             tune_results = autotune({
-                'lambdaJSD': [10.0, 30, 2.0],
-                'lambdad':   [20.0, 50.0, 5.0],
-                'lambdaw': [0.0,2,0.2]
+                'lambdaJSD': [0.0, 50.0, 5.0],
+                'lambdad':   [0.0, 50.0, 5.0],
+                'lambdaw': [0.0,0.0,0.2]
             }, cfg, d, rngs,
-            skip_mode = False)
+            skip_mode = False,
+            run_dir = trial_dir)
 
             del d
-        else:
-            all_tuned_results = {
-                "22": {"lambdaJSD": 18.0, "lambdad": 45.0, "lambdaw": 0.0},
-                "23": {"lambdaJSD": 20.0, "lambdad": 50.0, "lambdaw": 0.0},
-                "24": {"lambdaJSD": 18.0, "lambdad": 50.0, "lambdaw": 0.0},
-                "25": {"lambdaJSD": 20.0, "lambdad": 45.0, "lambdaw": 0.0},
-                "26": {"lambdaJSD": 18.0, "lambdad": 45.0, "lambdaw": 0.0},
-                "27": {"lambdaJSD": 18.0, "lambdad": 40.0, "lambdaw": 0.0},
-                "28": {"lambdaJSD": 20.0, "lambdad": 50.0, "lambdaw": 0.0},
-                "29": {"lambdaJSD": 18.0, "lambdad": 40.0, "lambdaw": 0.0},
-            }
-            tune_results = all_tuned_results[w]
-        #analysis
-        num_experiments = 3
-        analysis_rngs = [run_experiment.build_rngs(cfg["rng"], device) for _ in range(num_experiments)]
-        analysis(tune_results, cfg, data_cfg, analysis_rngs, device)
+
+            #analysis
+            num_experiments = 3
+            analysis_rngs = [run_experiment.build_rngs(cfg["rng"], device) for _ in range(num_experiments)]
+            analysis(tune_results, cfg, data_cfg, analysis_rngs, device)
+
+            with open(batch_dir / "batch_summary.txt", "a") as f:
+                f.write(f"trial {trial_idx}: {tune_results}  dir={trial_dir.name}\n")

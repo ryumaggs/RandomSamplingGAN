@@ -92,7 +92,7 @@ def run_experiments(cfg, data_cfg):
                 #copy cfg and update with experimental params
                 local_cfg = copy.deepcopy(cfg)
                 for v,v_val in var_update.items():
-                    local_cfg['hparams'][v] = v_val
+                    local_cfg['data'][v] = v_val
                 hparams=local_cfg['hparams']
                 trainingparams=local_cfg['training']
 
@@ -142,7 +142,7 @@ def run_target_variable_sweep(cfg, data_cfg, column_indexes, num_runs=10):
     variable alongside RECVDVACC (which is always predicted, at index 0).
     '''
     discovery_cfg = copy.deepcopy(cfg)
-    discovery_cfg['data']['label_information'] = {'RECVDVACC': 0}
+    discovery_cfg['hparams']['label_information'] = {'RECVDVACC': 0}
     discovery_rngs = build_rngs(discovery_cfg, device=device)
     discovery_week = str(discovery_cfg['data']['weeks'][0])
     discovery_dataset = Dataset.build_dataset(discovery_cfg, data_cfg, discovery_rngs, discovery_week, device)

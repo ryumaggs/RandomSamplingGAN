@@ -399,7 +399,7 @@ class GAN():
         # Compare each Y_j row with all X_i rows
         # indicator[i,j] = 1 if X[i] == Y[j] across all variables
         # Shape: (m, n)
-        if False:
+        if True:
             similarity = (Y.unsqueeze(1) == X.unsqueeze(0)).float().mean(dim=2)  # fraction of variables that match
             # Weighted sum over X for each Y_j
             p_hat = torch.matmul(similarity, X_probs)  # shape (m,)
@@ -407,17 +407,18 @@ class GAN():
             # Avoid log(0)
             p_hat = p_hat + eps
             loss = -(Y_probs * torch.log(p_hat)).sum()
-        def kliep_loss(X, Y, X_probs, Y_probs, eps=1e-12, chunk=256):
-            m = Y.shape[0]
-            total = 0.0
-            for i in range(0, m, chunk):
-                yb = Y[i:i+chunk]                                          # (b, d)
-                yp = Y_probs[i:i+chunk]                                    # (b,)
-                sim = (yb.unsqueeze(1) == X.unsqueeze(0)).float().mean(2)  # (b, n) transient
-                p = sim @ X_probs + eps                                    # (b,)
-                total = total + (yp * torch.log(p)).sum()
-            return -total
-        loss = kliep_loss(X, Y, X_probs, Y_probs)
+        else:
+            def kliep_loss(X, Y, X_probs, Y_probs, eps=1e-12, chunk=256):
+                m = Y.shape[0]
+                total = 0.0
+                for i in range(0, m, chunk):
+                    yb = Y[i:i+chunk]                                          # (b, d)
+                    yp = Y_probs[i:i+chunk]                                    # (b,)
+                    sim = (yb.unsqueeze(1) == X.unsqueeze(0)).float().mean(2)  # (b, n) transient
+                    p = sim @ X_probs + eps                                    # (b,)
+                    total = total + (yp * torch.log(p)).sum()
+                return -total
+            loss = kliep_loss(X, Y, X_probs, Y_probs)
 
         return loss
 

@@ -1109,9 +1109,12 @@ def load_autotune_dir(autotune_dir):
 
     return results
 
-def summarize_starting_predictions_by_combo(runs_path, num_runs=50):
+def summarize_starting_predictions_by_combo(runs_path, num_runs=50,):
     '''
-    Groups tensorboard run folders in runs_path by the target-variable
+    Groups tensorboard run folders in runs_path by 
+    
+    target-variable
+
     combination baked into each folder's name (the '||labels:[...]' suffix
     experiments.py appends to the SummaryWriter comment), then for each
     combination reports, across all runs sharing that combination:
@@ -1154,7 +1157,7 @@ def summarize_starting_predictions_by_combo(runs_path, num_runs=50):
         jsd_tag = "jsd"
         var_tags = [f"{v} prediction" for v in extra_vars]
 
-        out, _ = load_runs_as_numpy(runs_path, var_tags + [recvdvacc_tag, tvd_tag, jsd_tag], filter_by=[combo_str],
+        out, _ = load_runs_as_numpy(runs_path, var_tags + [recvdvacc_tag, tvd_tag, jsd_tag], filter_by=[combo_str]+filter_by,
                                      num_runs=max(len(names), num_runs))
         recvdvacc_ending_means = last_third_means(out[recvdvacc_tag])
         tvd_ending_means = last_third_means(out[tvd_tag])
@@ -1197,6 +1200,200 @@ def summarize_starting_predictions_by_combo(runs_path, num_runs=50):
             results[combo_str] = combo_results
 
     return results
+
+def summarize_var_sweep_groups(root_dir=".", run_dir_names=['runs_10ktuned']):
+    '''
+    Scans root_dir for the base 'runs' directory and any directories whose
+    name is prefixed with 'runs_', groups the tensorboard run subfolders
+    found within them by their "VAR = {...}" substring (the sweep-variable
+    dict experiments.py bakes into each SummaryWriter comment), and for each
+    group reports the mean/std across all grouped runs of the average value
+    of the 'RECVDVACC prediction', 'jsd', 'tvd', 'Gen Entropy', and
+    'Truth - Fake scores' scalars over the last third of each run's logged
+    time steps.
+
+    Parameters
+    ----------
+    root_dir : str
+        Directory containing the 'runs' and 'runs_*' folders (defaults to
+        the current directory).
+    run_dir_names : list[str] or None
+        Explicit list of top-level run directories (relative to root_dir)
+        to scan. If None, auto-discovers 'runs' and any 'runs_*' directories
+        directly under root_dir.
+
+    Returns
+    -------
+    dict: {var_str: {scalar_name: {'mean': float, 'std': float, 'n': int}}}
+    '''
+    scalar_names = ['RECVDVACC prediction', 'jsd', 'tvd', 'Gen Entropy', 'Truth - Fake scores']
+    var_re = re.compile(r"VAR = (\{[^}]*\})")
+    tfevents_re = re.compile(r'events\.out\.tfevents\.')
+
+    group_to_run_folders = {}
+    for run_dir_name in run_dir_names:
+        runs_path = os.path.join(root_dir, run_dir_name)
+        if not os.path.isdir(runs_path):
+            continue
+        for name in os.listdir(runs_path):
+            run_path = os.path.join(runs_path, name)
+            if not os.path.isdir(run_path):
+                continue
+            match = var_re.search(name)
+            if match is None:
+                continue
+            group_to_run_folders.setdefault(match.group(1), []).append(run_path)
+
+    def last_third_mean(values):
+        if len(values) == 0:
+            return None
+        k = max(1, len(values) // 3)
+        return float(np.mean(values[-k:]))
+
+    results = {}
+    for var_str, run_folders in group_to_run_folders.items():
+        per_scalar_run_means = {v: [] for v in scalar_names}
+
+        for run_path in run_folders:
+            event_file = None
+            for fname in os.listdir(run_path):
+                if tfevents_re.match(fname):
+                    event_file = os.path.join(run_path, fname)
+                    break
+            if event_file is None:
+                continue
+
+            ea = event_accumulator.EventAccumulator(event_file)
+            ea.Reload()
+            available = ea.Tags().get('scalars', [])
+
+            for vname in scalar_names:
+                if vname not in available:
+                    continue
+                values = [e.value for e in ea.Scalars(vname)]
+                m = last_third_mean(values)
+                if m is not None:
+                    per_scalar_run_means[vname].append(m)
+
+        results[var_str] = {}
+        for vname in scalar_names:
+            run_means = per_scalar_run_means[vname]
+            if len(run_means) == 0:
+                continue
+            results[var_str][vname] = {
+                'mean': float(np.mean(run_means)),
+                'std': float(np.std(run_means)),
+                'n': len(run_means),
+            }
+
+    print()
+    print("=== VAR sweep group summary (last-1/3 average per run, aggregated across group) ===")
+    for var_str in sorted(results.keys()):
+        print()
+        print(f"{var_str}  (from {len(group_to_run_folders[var_str])} runs)")
+        for vname in scalar_names:
+            stats = results[var_str].get(vname)
+            if stats is None:
+                print(f"  {vname}: no data")
+                continue
+            print(f"  {vname}: mean={stats['mean']:.4f}, std={stats['std']:.4f}, n={stats['n']}")
+
+    return results
+
+def plot_var_sweep_groups(root_dir=".", run_dir_names=['runs_10ktuned'], output_dir="./images/", results=None):
+    '''
+    Generates one bar-chart figure per scalar tracked by
+    summarize_var_sweep_groups (RECVDVACC prediction, jsd, tvd, Gen Entropy,
+    Truth - Fake scores). Each figure's x-axis is the swept VAR value (e.g.
+    bias_limit), sorted
+    ascending; each x-tick has a bar for that group's mean value with an
+    error bar showing the group's standard deviation. Figures are saved as
+    PNGs under output_dir.
+
+    Parameters
+    ----------
+    root_dir : str
+        Directory containing the 'runs' and 'runs_*' folders.
+    run_dir_names : list[str]
+        Top-level run directories (relative to root_dir) to scan, passed
+        through to summarize_var_sweep_groups when results is None.
+    output_dir : str
+        Folder to save the generated figures into (created if missing).
+    results : dict or None
+        Pre-computed output of summarize_var_sweep_groups. If None, it is
+        computed by calling summarize_var_sweep_groups(root_dir, run_dir_names).
+
+    Returns
+    -------
+    list[str]: paths of the saved image files
+    '''
+    scalar_names = ['RECVDVACC prediction', 'jsd', 'tvd', 'Gen Entropy', 'Truth - Fake scores']
+    reference_lines = {
+        'jsd': 0.1,
+        'RECVDVACC prediction': 0.6,
+    }
+
+    if results is None:
+        results = summarize_var_sweep_groups(root_dir=root_dir, run_dir_names=run_dir_names)
+
+    if not results:
+        print("No grouped runs found; nothing to plot.")
+        return []
+
+    # each group's VAR string is a single-key dict, e.g. "{'bias_limit': 100}"
+    parsed = []
+    for var_str in results:
+        var_dict = ast.literal_eval(var_str)
+        key, value = next(iter(var_dict.items()))
+        parsed.append((value, key, var_str))
+    parsed.sort(key=lambda t: t[0])
+
+    var_key = parsed[0][1]
+    x_values = [p[0] for p in parsed]
+    ordered_var_strs = [p[2] for p in parsed]
+
+    divider_pos = None
+    if 100 in x_values and 150 in x_values:
+        divider_pos = (x_values.index(100) + x_values.index(150)) / 2.0
+    else:
+        print(f"Skipping divider line: 100 and/or 150 not found among {var_key} values {x_values}")
+
+    os.makedirs(output_dir, exist_ok=True)
+    saved_paths = []
+
+    for scalar_name in scalar_names:
+        means = []
+        stds = []
+        for var_str in ordered_var_strs:
+            stats = results[var_str].get(scalar_name)
+            means.append(stats['mean'] if stats else np.nan)
+            stds.append(stats['std'] if stats else 0.0)
+
+        x_pos = np.arange(len(x_values))
+        fig, ax = plt.subplots(figsize=(max(6, len(x_values) * 0.8), 5))
+        ax.bar(x_pos, means, yerr=stds, capsize=4, color='steelblue')
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels([str(v) for v in x_values])
+        ax.set_xlabel(var_key)
+        ax.set_ylabel(scalar_name)
+        ax.set_title(f"{scalar_name} by {var_key}")
+        ax.grid(True, axis='y', alpha=0.3)
+        if scalar_name in reference_lines:
+            ax.axhline(reference_lines[scalar_name], color='red', linestyle=':')
+        if scalar_name == 'tvd':
+            ax.set_ylim(bottom=0.8)
+        if divider_pos is not None:
+            ax.axvline(divider_pos, color='green', linestyle='--')
+        plt.tight_layout()
+
+        safe_name = re.sub(r'[^A-Za-z0-9_-]+', '_', scalar_name).strip('_')
+        out_path = os.path.join(output_dir, f"{safe_name}_by_{var_key}.png")
+        plt.savefig(out_path)
+        plt.close(fig)
+        saved_paths.append(out_path)
+        print(f"Saved {out_path}")
+
+    return saved_paths
 
 def row_counts_of_smallest_k(arr, k):
     flat_idx = np.argpartition(arr.ravel(), k)[:k]
@@ -1274,7 +1471,9 @@ def normalize_matrix(m):
 
 if __name__ == "__main__":
     runs_path = "runs_inctot_race_witheld_FBDelphidriven/"
-    summarize_starting_predictions_by_combo(runs_path)
+    #summarize_starting_predictions_by_combo(runs_path)
+    summarize_var_sweep_groups(root_dir=".", run_dir_names=['runs_10ktuned'],filter_by=['phase=4'])
+    #plot_var_sweep_groups(root_dir=".", run_dir_names=['runs_10ktuned'], output_dir="./images/", results=None)
     if False: #analyzing target prediction runs aggregation
         target_var_tb_name = "RECVDVACC prediction"
         metric_tb_name = "jsd" #"Gen Entropy"
