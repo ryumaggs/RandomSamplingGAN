@@ -1,0 +1,5 @@
+trial 0: {'lambdaJSD': 25.0, 'lambdad': 50.0, 'lambdaw': 0.0}  dir=trial_0
+trial 1: {'lambdaJSD': 30.0, 'lambdad': 50.0, 'lambdaw': 0.0}  dir=trial_1
+trial 2: {'lambdaJSD': 20.0, 'lambdad': 50.0, 'lambdaw': 0.0}  dir=trial_2
+trial 3: {'lambdaJSD': 20.0, 'lambdad': 50.0, 'lambdaw': 0.0}  dir=trial_3
+trial 4: {'lambdaJSD': 20.0, 'lambdad': 50.0, 'lambdaw': 0.0}  dir=trial_4

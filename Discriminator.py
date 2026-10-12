@@ -101,11 +101,13 @@ class DeepSetCritic(nn.Module):
                  dropout,
                  layers,
                  embedding_dict,
-                 hidden_dim=1024,):
+                 hidden_dim=1024,
+                 device=None,):
         super().__init__()
+        device = device if device is not None else torch.device('cpu')
         self.embedding_dict = embedding_dict
-        self.embedding_layers = create_embedding_layers(self.embedding_dict,torch.device('cuda:0'))
-        
+        self.embedding_layers = create_embedding_layers(self.embedding_dict, device)
+
         self.rngs = rngs
 
         phi_layers = []
@@ -150,8 +152,8 @@ class DeepSetCritic(nn.Module):
         self.apply_he_init_to_sequential(self.phi)
         self.apply_he_init_to_sequential(self.rho)
         
-        self.phi.to(torch.device('cuda:0'))
-        self.rho.to(torch.device('cuda:0'))
+        self.phi.to(device)
+        self.rho.to(device)
 
     def init_bias_only(self,model):
         for layer_id, layer in enumerate(model):
@@ -203,7 +205,8 @@ class DeepSetCriticComplex(DeepSetCritic):
             dropout,
             layers,
             embedding_dict,
-            hidden_dim=1024,):
+            hidden_dim=1024,
+            device=None,):
         super().__init__(
                 rngs,
                 num_features,
@@ -211,10 +214,12 @@ class DeepSetCriticComplex(DeepSetCritic):
                 layers,
                 embedding_dict,
                 hidden_dim=hidden_dim,
+                device=device,
             )
 
+        device = device if device is not None else torch.device('cpu')
         self.embedding_dict = embedding_dict
-        self.embedding_layers = create_embedding_layers(self.embedding_dict, torch.device("cuda:0"))
+        self.embedding_layers = create_embedding_layers(self.embedding_dict, device)
 
         self.rngs = rngs
 

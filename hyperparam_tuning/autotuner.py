@@ -24,9 +24,68 @@ import torch
 import Dataset
 
 JSD_MAX = 0.075
-P2_JSD_MAX = 0.1
-NUM_TRIALS = 9
+P2_JSD_MAX = 0.4
+NUM_TRIALS = 10
+DATASET_SELECTION_TRIALS = 10
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def compute_uniform_jsd(dataset, device):
+    """
+    Model-free JSD between a uniformly-weighted biased/survey sample and ground
+    truth, computed directly from the dataset's raw category codes (mirrors
+    GAN.get_JSD_loss, but with a uniform 1/N weight in place of the generator's
+    output weights). Used as a cheap pre-training quantity of interest to pick
+    among several random draws of the same week's data before any model is built.
+    """
+    unscaled_biased = torch.tensor(dataset.unscaled_biased, dtype=torch.float32, device=device)
+    unscaled_gt = torch.tensor(dataset.unscaled_ground_truth, dtype=torch.float32, device=device)
+    gt_weights = torch.tensor(dataset.gt_weights, dtype=torch.float32)
+    gt_weights = (gt_weights / (gt_weights.sum() + 1e-12)).to(device)
+    embedding_dict = dataset.embedding_dict
+
+    n = unscaled_biased.shape[0]
+    uniform_weights = torch.full((n,), 1.0 / n, device=device)
+
+    jsd_total = 0.0
+    eps = 1e-8
+    for i in range(unscaled_biased.shape[1]):
+        P = torch.nn.functional.one_hot(unscaled_biased[:, i].long(), num_classes=embedding_dict[i][1]).float()
+        Q = torch.nn.functional.one_hot(unscaled_gt[:, i].long(), num_classes=embedding_dict[i][1]).float()
+
+        P_dist = (uniform_weights[:, None] * P).sum(dim=0)
+        Q_dist = (gt_weights[:, None] * Q).sum(dim=0)
+        M_dist = 0.5 * (P_dist + Q_dist)
+
+        kl_P = torch.sum(P_dist * torch.log((P_dist + eps) / (M_dist + eps)))
+        kl_Q = torch.sum(Q_dist * torch.log((Q_dist + eps) / (M_dist + eps)))
+        jsd_total += (kl_P + kl_Q) * (1 / (np.sqrt(embedding_dict[i][2]) - 1))
+
+    return jsd_total.item()
+
+
+def select_best_dataset(cfg, data_cfg, week, device, num_trials=DATASET_SELECTION_TRIALS, log=None):
+    """
+    Build `num_trials` independent random draws of the dataset for `week`
+    (each with its own freshly-sampled rngs) and keep the one with the
+    highest uniform-weighted JSD against ground truth.
+
+    Returns
+    -------
+    best_dataset, best_rngs, best_jsd
+    """
+    best_dataset, best_rngs, best_jsd = None, None, -float("inf")
+    for trial in range(num_trials):
+        rngs = run_experiment.build_rngs(cfg["rng"], device)
+        candidate = Dataset.build_dataset(cfg, data_cfg, rngs, week, device)
+        print(candidate.biased_dataset.shape)
+        jsd = compute_uniform_jsd(candidate, device)
+
+        print(f"  dataset selection trial {trial}: uniform JSD = {jsd:.4f}")
+
+        if jsd > best_jsd:
+            best_dataset, best_rngs, best_jsd = candidate, rngs, jsd
+
+    return best_dataset, best_rngs, best_jsd
 
 def final_quarter_mean(jsd_history):
     """
@@ -322,44 +381,48 @@ if __name__ == "__main__":
     from run_experiment import load_config
     from Dataset import D4P_dataset, HouseholdPulse_dataset
 
-    
-    for week in range(29,30):
-        w = str(week)
-        cfg = load_config(BASE_DIR / 'configs' / 'HHP_compressed.yaml')
-        data_cfg = load_config(BASE_DIR / 'configs' / 'all_datasets.yaml')
-        cfg['data']['weeks'] = [w]
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # subset_size values to sweep — each one runs a full standalone suite
+    # (NUM_TRIALS trials, each a full phase 1-4 autotune), one after another,
+    # so a single call to this script covers every batch size unattended.
+    subset_sizes = [32, 64, 128, 256]
 
-        dataset_stem = cfg['data']['dataset_name']
-        batch_dir = (BASE_DIR / "hyperparam_tuning" / "autoTuneDir" /
-                     (datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + f"_{dataset_stem}"))
-        os.makedirs(batch_dir, exist_ok=False)
+    for b in subset_sizes:
+        for week in range(29,30):
+            w = str(week)
+            cfg = load_config(BASE_DIR / 'configs' / 'HHP_autotuner.yaml')
+            data_cfg = load_config(BASE_DIR / 'configs' / 'all_datasets.yaml')
+            cfg['data']['weeks'] = [w]
+            cfg['hparams']['subset_size'] = b
+            device = torch.device(cfg['device'])
 
-        for trial_idx in range(NUM_TRIALS):
-            trial_dir = batch_dir / f"trial_{trial_idx}"
-            os.makedirs(trial_dir, exist_ok=False)
+            dataset_stem = cfg['data']['dataset_name']
+            batch_dir = (BASE_DIR / "hyperparam_tuning" / "autoTuneDir" /
+                         (datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + f"_{dataset_stem}_{b}batchsize"))
+            os.makedirs(batch_dir, exist_ok=False)
 
-            rngs = run_experiment.build_rngs(cfg["rng"], device)
-            d = Dataset.build_dataset(cfg,
-                                        data_cfg,
-                                        rngs,
-                                        w,
-                                        device,)
+            for trial_idx in range(NUM_TRIALS):
+                trial_dir = batch_dir / f"trial_{trial_idx}"
+                os.makedirs(trial_dir, exist_ok=False)
 
-            tune_results = autotune({
-                'lambdaJSD': [0.0, 50.0, 5.0],
-                'lambdad':   [0.0, 50.0, 5.0],
-                'lambdaw': [0.0,0.0,0.2]
-            }, cfg, d, rngs,
-            skip_mode = False,
-            run_dir = trial_dir)
+                d, rngs, best_jsd = select_best_dataset(cfg, data_cfg, w, device,
+                                                         num_trials=DATASET_SELECTION_TRIALS)
+                print(f"  selected dataset draw with uniform JSD = {best_jsd:.4f} "
+                      f"(best of {DATASET_SELECTION_TRIALS} trials)")
 
-            del d
+                tune_results = autotune({
+                    'lambdaJSD': [0.0, 50.0, 5.0],
+                    'lambdad':   [0.0, 100, 5.0],
+                    'lambdaw': [0.0,0.0,0.2]
+                }, cfg, d, rngs,
+                skip_mode = False,
+                run_dir = trial_dir)
 
-            #analysis
-            num_experiments = 3
-            analysis_rngs = [run_experiment.build_rngs(cfg["rng"], device) for _ in range(num_experiments)]
-            analysis(tune_results, cfg, data_cfg, analysis_rngs, device)
+                del d
 
-            with open(batch_dir / "batch_summary.txt", "a") as f:
-                f.write(f"trial {trial_idx}: {tune_results}  dir={trial_dir.name}\n")
+                #analysis
+                num_experiments = 3
+                analysis_rngs = [run_experiment.build_rngs(cfg["rng"], device) for _ in range(num_experiments)]
+                analysis(tune_results, cfg, data_cfg, analysis_rngs, device)
+
+                with open(batch_dir / "batch_summary.txt", "a") as f:
+                    f.write(f"trial {trial_idx}: {tune_results}  dir={trial_dir.name}\n")

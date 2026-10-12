@@ -103,7 +103,8 @@ class GAN():
                                      dropout=cfg['hparams']['generator_dropout'],
                                      batch_size = cfg['hparams']['batch_size'],
                                      temperature=cfg['hparams']['temperature'],
-                                     embedding_dict=self.embedding_dict).to(self.device)
+                                     embedding_dict=self.embedding_dict,
+                                     device=self.device).to(self.device)
         elif self.generator_type == 'deepSetComplex':
             self.generator = DeepSetComplexNet(rngs=self.rngs,
                                      num_features=self.final_dataset_shape,
@@ -112,7 +113,8 @@ class GAN():
                                      dropout=cfg['hparams']['generator_dropout'],
                                      batch_size = cfg['hparams']['batch_size'],
                                      temperature=cfg['hparams']['temperature'],
-                                     embedding_dict=self.embedding_dict).to(self.device)
+                                     embedding_dict=self.embedding_dict,
+                                     device=self.device).to(self.device)
         elif self.generator_type == 'weights':
             self.generator = weightsGen(survey_dataset=dataset.biased_dataset,
                                         sample_size=cfg['hparams']['subset_size'],).to(self.device)
@@ -222,13 +224,15 @@ class GAN():
                                                num_features=self.final_dataset_shape,
                                             dropout=self.discriminator_dropout,
                                         layers=self.disc_layers,
-                                        embedding_dict=self.embedding_dict).to(self.device)
+                                        embedding_dict=self.embedding_dict,
+                                        device=self.device).to(self.device)
         elif self.discriminator_type == 'deepSetComplex':
             self.discriminator = DeepSetCriticComplex(rngs=self.rngs,
                                                num_features=self.final_dataset_shape,
                                             dropout=self.discriminator_dropout,
                                         layers=self.disc_layers,
-                                        embedding_dict=self.embedding_dict).to(self.device)
+                                        embedding_dict=self.embedding_dict,
+                                        device=self.device).to(self.device)
         else:
             raise NotImplementedError
 

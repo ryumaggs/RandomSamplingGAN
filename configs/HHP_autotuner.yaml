@@ -16,7 +16,7 @@ data:
     - '29'
   columns_to_keep: null
 training:
-  NUM_TRIALS: 1
+  NUM_TRIALS: 9
   dtrainingfactor: 8
   epochs: 600
   gtrainingfactor: 1
@@ -29,7 +29,7 @@ depricated:
   lambda_first_layer: 0
   warmup_epochs: 0
   wudur: 1
-device: cuda:0
+device: cuda:1
 experimental_hparams: {}
 hparams:
   batch_size: 1
@@ -47,7 +47,7 @@ hparams:
   lambdad: 25.0
   lambdagp: 10.0
   lambdaw: 0.0
-  subset_size: 128
+  subset_size: 256
   tau: 0.1
   temperature: 0.1
   temperature_end: 0.1

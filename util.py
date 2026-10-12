@@ -334,7 +334,8 @@ def normalize_to_minus1_plus1(data1,data2):
     data_norm_2 = data_norm_0_2 * 2 - 1
     return data_norm_1, data_norm_2
 
-def warmup_spectral_norm(model, input_shape, device=torch.device('cuda:0'), steps=5):
+def warmup_spectral_norm(model, input_shape, device=None, steps=5):
+    device = device if device is not None else torch.device('cpu')
     print("in warmup")
     model.eval()
     dummy_input = torch.randn(*input_shape).to(device)

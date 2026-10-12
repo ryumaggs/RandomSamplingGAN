@@ -200,14 +200,16 @@ class DeepSetNet(nn.Module):
                  temperature,
                  embedding_dict,
                  batch_size=1,
-                 hidden_dim=1024,):
+                 hidden_dim=1024,
+                 device=None,):
         '''
         commented code for fast experimentation
         '''
         super().__init__()
+        device = device if device is not None else torch.device('cpu')
         self.embedding_dict = embedding_dict
-        self.embedding_layers = create_embedding_layers(self.embedding_dict,torch.device('cuda:0'))
-        
+        self.embedding_layers = create_embedding_layers(self.embedding_dict, device)
+
         
         self.batch_size = batch_size
         self.sample_size = sample_size
@@ -255,8 +257,8 @@ class DeepSetNet(nn.Module):
         self.apply_he_init_to_sequential(self.phi)
         self.apply_he_init_to_sequential(self.rho)
         
-        self.phi.to(torch.device('cuda:0'))
-        self.rho.to(torch.device('cuda:0'))
+        self.phi.to(device)
+        self.rho.to(device)
 
     def apply_he_init_to_sequential(self,model):
         for layer_id, layer in enumerate(model):
@@ -264,11 +266,11 @@ class DeepSetNet(nn.Module):
             #initialize all intermediary layers using relu non linearity
             if isinstance(layer, torch.nn.Linear):
                 if isinstance(model[layer_id+1],torch.nn.Identity):
-                    torch.nn.init.xavier_uniform_(layer.weight, generator=self.rngs['torch']) 
+                    torch.nn.init.xavier_uniform_(layer.weight, generator=self.rngs['torch'])
                 elif isinstance(model[layer_id+1],torch.nn.LeakyReLU):
-                    torch.nn.init.kaiming_uniform_(layer.weight, generator=self.rngs['torch']) 
+                    torch.nn.init.kaiming_uniform_(layer.weight, generator=self.rngs['torch'])
                 elif isinstance(model[layer_id+2],torch.nn.Identity):
-                    torch.nn.init.xavier_uniform_(layer.weight, generator=self.rngs['torch']) 
+                    torch.nn.init.xavier_uniform_(layer.weight, generator=self.rngs['torch'])
                 elif isinstance(model[layer_id+2],torch.nn.LeakyReLU):  # Apply He initialization to Linear layers
                     torch.nn.init.kaiming_uniform_(layer.weight, mode='fan_out', nonlinearity='leaky_relu', generator=self.rngs['torch'])
                 if layer.bias is not None:
@@ -278,7 +280,7 @@ class DeepSetNet(nn.Module):
                     torch.nn.init.uniform_(layer.weight, a=0.0, b=1.0, generator=self.rngs['torch'])  # or any init you prefer
                     torch.nn.init.zeros_(layer.bias)
 
-    def forward(self, dataset, batch_override=None): 
+    def forward(self, dataset, batch_override=None):
         '''
         dataset is (1 x N x D) matrix, not [N x D]
         '''
@@ -287,8 +289,8 @@ class DeepSetNet(nn.Module):
         #x = embed_data(self.embedding_layers,self.embedding_dict,dataset.unsqueeze(0))
         if batch_override:
             bs = batch_override
-        x_phi = self.phi(dataset)                
-        global_context = x_phi.mean(dim=1, keepdim=True) 
+        x_phi = self.phi(dataset)
+        global_context = x_phi.mean(dim=1, keepdim=True)
         x_rho = self.rho(x_phi + global_context)          # [N, 1]
         logits = x_rho.squeeze(2)
         #temp log layer for testing
@@ -356,7 +358,8 @@ class DeepSetComplexNet(DeepSetNet):
              temperature,
              embedding_dict,
              batch_size=1,
-             hidden_dim=1024):
+             hidden_dim=1024,
+             device=None):
         super().__init__(
             rngs,
             num_features,
@@ -367,10 +370,12 @@ class DeepSetComplexNet(DeepSetNet):
             embedding_dict,
             batch_size=batch_size,
             hidden_dim=hidden_dim,
+            device=device,
         )
 
+        device = device if device is not None else torch.device('cpu')
         self.embedding_dict = embedding_dict
-        self.embedding_layers = create_embedding_layers(self.embedding_dict, torch.device("cuda:0"))
+        self.embedding_layers = create_embedding_layers(self.embedding_dict, device)
 
         self.batch_size = batch_size
         self.sample_size = sample_size
