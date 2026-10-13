@@ -30,7 +30,8 @@ depricated:
   warmup_epochs: 0
   wudur: 1
 device: cuda:1
-experimental_hparams: {}
+experimental_hparams:
+  subset_size: [10,20]
 hparams:
   batch_size: 1
   tf_batch_size: 9
