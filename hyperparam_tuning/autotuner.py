@@ -152,6 +152,18 @@ def _setup_logger(run_dir):
     return logger
 
 
+def make_run_name(cfg):
+    """
+    <timestamp>_<dataset_stem>, plus one _<key>-<v1>-<v2>... segment per entry
+    in cfg['experimental_hparams'] when that field is present and non-empty.
+    """
+    run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + f"_{cfg['data']['dataset_name']}"
+    for key, vals in (cfg.get('experimental_hparams') or {}).items():
+        vals = vals if isinstance(vals, (list, tuple)) else [vals]
+        run_name += f"_{key}-" + "-".join(str(v) for v in vals)
+    return run_name
+
+
 # ── Main tuning loop ──────────────────────────────────────────────────────────
 
 def autotune(param_ranges, cfg, dataset, rngs,
@@ -192,10 +204,7 @@ def autotune(param_ranges, cfg, dataset, rngs,
     if run_dir is None:
         base_dir = BASE_DIR / "hyperparam_tuning" / "autoTuneDir"
         os.makedirs(base_dir, exist_ok=True)
-
-        dataset_stem = cfg['data']['dataset_name']
-        run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + f"_{dataset_stem}"
-        run_dir = base_dir / run_name
+        run_dir = base_dir / make_run_name(cfg)
     os.makedirs(run_dir, exist_ok=True)
 
     log = _setup_logger(run_dir)
@@ -395,9 +404,7 @@ if __name__ == "__main__":
             cfg['hparams']['subset_size'] = b
             device = torch.device(cfg['device'])
 
-            dataset_stem = cfg['data']['dataset_name']
-            batch_dir = (BASE_DIR / "hyperparam_tuning" / "autoTuneDir" /
-                         (datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + f"_{dataset_stem}_{b}batchsize"))
+            batch_dir = BASE_DIR / "hyperparam_tuning" / "autoTuneDir" / make_run_name(cfg)
             os.makedirs(batch_dir, exist_ok=False)
 
             for trial_idx in range(NUM_TRIALS):
