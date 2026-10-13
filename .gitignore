@@ -18,6 +18,7 @@ runs/
 runs_*/
 saved*/
 saves*/
+hyperparam_tuning/autoTuneDir/
 hyperparam_tuning_old/
 hyperparam_tuning/optuna_log.txt
 experimental_features/
