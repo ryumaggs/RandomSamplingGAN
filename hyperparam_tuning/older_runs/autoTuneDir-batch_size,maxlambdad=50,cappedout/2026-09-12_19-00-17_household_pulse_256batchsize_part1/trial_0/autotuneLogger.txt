@@ -1,0 +1,52 @@
+19:00:18  autotune started — run dir: /scratch/ryu1/RandomSamplingGAN/hyperparam_tuning/autoTuneDir/2026-09-12_19-00-17_household_pulse/trial_0
+19:00:18    lambdaJSD: init=0.0, end=50.0, step=5.0
+19:00:18    lambdad: init=0.0, end=50.0, step=5.0
+19:00:18  === Phase 1: tuning lambdaJSD ===
+19:00:18    Running: lambdaJSD=0.0000, lambdad=0.0000
+19:05:11    final-quarter mean jsd = 0.8561
+19:05:11    Running: lambdaJSD=5.0000, lambdad=0.0000
+19:10:24    final-quarter mean jsd = 0.3994
+19:10:24    Running: lambdaJSD=10.0000, lambdad=0.0000
+19:15:38    final-quarter mean jsd = 0.1824
+19:15:38    Running: lambdaJSD=15.0000, lambdad=0.0000
+19:20:51    final-quarter mean jsd = 0.1070
+19:20:51    Running: lambdaJSD=20.0000, lambdad=0.0000
+19:26:05    final-quarter mean jsd = 0.0936
+19:26:05    Running: lambdaJSD=25.0000, lambdad=0.0000
+19:31:18    final-quarter mean jsd = 0.0518
+19:31:18    Phase 1 stabilized at lambdaJSD=30.0000
+19:31:18    Best lambdaJSD = 25.0000
+19:31:18  === Phase 2: tuning lambdad ===
+19:31:18    Running: lambdaJSD=25.0000, lambdad=0.0000
+19:36:31    final-quarter mean jsd = 0.0533, kliep = 1.1707
+19:36:31    Running: lambdaJSD=25.0000, lambdad=5.0000
+19:42:56    final-quarter mean jsd = 0.0475, kliep = 1.1620
+19:42:56    Running: lambdaJSD=25.0000, lambdad=10.0000
+19:49:20    final-quarter mean jsd = 0.0427, kliep = 1.1578
+19:49:20    Running: lambdaJSD=25.0000, lambdad=15.0000
+19:55:45    final-quarter mean jsd = 0.0328, kliep = 1.1466
+19:55:45    Running: lambdaJSD=25.0000, lambdad=20.0000
+20:02:10    final-quarter mean jsd = 0.0294, kliep = 1.1319
+20:02:10    Running: lambdaJSD=25.0000, lambdad=25.0000
+20:08:34    final-quarter mean jsd = 0.0227, kliep = 1.1243
+20:08:34    Running: lambdaJSD=25.0000, lambdad=30.0000
+20:14:59    final-quarter mean jsd = 0.0229, kliep = 1.1216
+20:14:59    Running: lambdaJSD=25.0000, lambdad=35.0000
+20:21:24    final-quarter mean jsd = 0.0343, kliep = 1.1055
+20:21:24    Running: lambdaJSD=25.0000, lambdad=40.0000
+20:27:48    final-quarter mean jsd = 0.0311, kliep = 1.1039
+20:27:48    Running: lambdaJSD=25.0000, lambdad=45.0000
+20:34:10    final-quarter mean jsd = 0.0318, kliep = 1.0949
+20:34:10    Running: lambdaJSD=25.0000, lambdad=50.0000
+20:40:35    final-quarter mean jsd = 0.0249, kliep = 1.0970
+20:40:35    Best lambdad = 50.0000
+20:40:35  === Phase 3: tuning lambdaw ===
+20:40:35    Running: lambdaJSD=25.0000, lambdad=50.0000, lambdaw=0.0000
+20:47:00    final-quarter mean jsd = 0.0411, kliep = 1.0938
+20:47:00    Best lambdaw = 0.0000, DID NOT END
+20:47:00  === Tuning complete ===
+20:47:00    best lambdaJSD = 25.0000
+20:47:00    best lambdad = 50.0000
+20:47:00    best lambdaw = 0.0000
+20:47:00  === Phase 4: analysis ===
+20:47:00  Analyzing: {'lambdaJSD': 25.0, 'lambdad': 50.0, 'lambdaw': 0.0}
