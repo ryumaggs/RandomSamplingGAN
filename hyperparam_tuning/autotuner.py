@@ -154,13 +154,14 @@ def _setup_logger(run_dir):
 
 def make_run_name(cfg):
     """
-    <timestamp>_<dataset_stem>, plus one _<key>-<v1>-<v2>... segment per entry
-    in cfg['experimental_hparams'] when that field is present and non-empty.
+    <timestamp>_<dataset_stem>, plus one _<value><key> segment (e.g. _32subset_size)
+    per value in cfg['experimental_hparams'] when that field is present and non-empty.
+    exploring_batchsize.parse_run_name() inverts this.
     """
     run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + f"_{cfg['data']['dataset_name']}"
     for key, vals in (cfg.get('experimental_hparams') or {}).items():
         vals = vals if isinstance(vals, (list, tuple)) else [vals]
-        run_name += f"_{key}-" + "-".join(str(v) for v in vals)
+        run_name += "".join(f"_{v}{key}" for v in vals)
     return run_name
 
 
@@ -389,19 +390,29 @@ def analysis(param_dict, cfg,
 if __name__ == "__main__":
     from run_experiment import load_config
     from Dataset import D4P_dataset, HouseholdPulse_dataset
+    from util import cartesian_product_hyperparams
 
-    # subset_size values to sweep — each one runs a full standalone suite
+    CFG_PATH = BASE_DIR / 'configs' / 'HHP_autotuner.yaml'
+
+    # every value in cfg['experimental_hparams'] runs a full standalone suite
     # (NUM_TRIALS trials, each a full phase 1-4 autotune), one after another,
-    # so a single call to this script covers every batch size unattended.
-    subset_sizes = [32, 64, 128, 256]
+    # so a single call to this script covers every setting unattended.
+    # Empty / missing experimental_hparams -> a single run with the config as-is.
+    base_cfg = load_config(CFG_PATH)
+    exp_hparams = base_cfg.get('experimental_hparams') or {}
+    hparam_updates = (cartesian_product_hyperparams(exp_hparams,
+                                                    product=base_cfg.get('cartesian_product', False))
+                      if exp_hparams else [{}])
 
-    for b in subset_sizes:
+    for hparam_update in hparam_updates:
         for week in range(29,30):
             w = str(week)
-            cfg = load_config(BASE_DIR / 'configs' / 'HHP_autotuner.yaml')
+            cfg = load_config(CFG_PATH)
             data_cfg = load_config(BASE_DIR / 'configs' / 'all_datasets.yaml')
             cfg['data']['weeks'] = [w]
-            cfg['hparams']['subset_size'] = b
+            cfg['hparams'].update(hparam_update)
+            # narrow to this run's values so make_run_name names the folder after them
+            cfg['experimental_hparams'] = {k: [v] for k, v in hparam_update.items()}
             device = torch.device(cfg['device'])
 
             batch_dir = BASE_DIR / "hyperparam_tuning" / "autoTuneDir" / make_run_name(cfg)

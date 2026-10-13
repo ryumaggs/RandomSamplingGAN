@@ -5,8 +5,9 @@ Analysis of how autotuner.py's tuning behavior scales with batch size, using
 the experiment folders already collected under hyperparam_tuning/autoTuneDir/.
 (Not autotuner_optuna.py — that's an outdated, unused script.)
 
-Each autoTuneDir/<experiment>/ folder name carries a batch-size tag (e.g.
-"..._64batchsize", "..._256batchsize_part1"); within it, trial_N/ holds an
+Each autoTuneDir/<experiment>/ folder name carries a _<value><var> tag for the
+swept variable (e.g. "..._64subset_size", "..._256batchsize_part1"; see
+parse_run_name); within it, trial_N/ holds an
 autotuneLogger.txt recording the autotune() run described in autotuner.py:
 
   Phase 1 sweeps lambdaJSD (holding lambdad=0) until the settled
@@ -39,7 +40,12 @@ from autotuner import final_quarter_mean
 AUTOTUNE_DIR = Path(__file__).parent / "autoTuneDir"
 VACCINATION_SCALAR = "RECVDVACC prediction"
 
-_BATCHSIZE_RE = re.compile(r"(\d+)batchsize")
+# folder names are <YYYY-MM-DD_HH-MM-SS>_<dataset_stem>[_<value><var>...][_partN]
+# (see autotuner.make_run_name). Each _<value><var> segment starts with a number
+# and runs until the next "_<number>" or the end, so underscores inside var
+# names (subset_size) and dataset stems (household_pulse) are safe.
+_RUN_NAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})_(.+?)(?:_part(\d+))?$")
+_VAR_SEGMENT_RE = re.compile(r"_(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)([A-Za-z]\w*?)(?=_-?\d|$)")
 _PHASE_HEADER_RE = re.compile(r"=== Phase (\d+): tuning (\w+) ===")
 _RUNNING_RE = re.compile(r"Running: (.+)$")
 _PARAM_RE = re.compile(r"(\w+)=([-\d.]+)")
@@ -107,33 +113,80 @@ def parse_autotune_log(log_path):
 
 # ── experiment/trial discovery ──────────────────────────────────────────────
 
-def discover_experiment_dirs(auto_tune_dir=None):
+def _parse_number(s):
+    try:
+        return int(s)
+    except ValueError:
+        return float(s)
+
+
+def parse_run_name(name):
     """
-    Group autoTuneDir experiment folders by the batch size encoded in their
-    name. Folders for the same batch size that were split across multiple
-    runs (e.g. "..._256batchsize_part1" and "..._256batchsize_part2") are
-    grouped together under that one batch size.
+    Parse an autoTuneDir folder name (autotuner.make_run_name format).
+
+    e.g. "2026-10-08_09-38-27_household_pulse_32subset_size_part1" ->
+         {"timestamp": "2026-10-08_09-38-27", "dataset": "household_pulse",
+          "vars": {"subset_size": 32}, "part": 1}
+
+    Returns None if the name doesn't match the format.
+    """
+    m = _RUN_NAME_RE.match(name)
+    if not m:
+        return None
+    timestamp, rest, part = m.groups()
+    first_var = re.search(r"_-?\d", rest)
+    dataset = rest[:first_var.start()] if first_var else rest
+    tail = rest[len(dataset):]
+    segments = _VAR_SEGMENT_RE.findall(tail)
+    # every character after the dataset stem must belong to a segment
+    if "".join(f"_{v}{k}" for v, k in segments) != tail:
+        return None
+    return {
+        "timestamp": timestamp,
+        "dataset": dataset,
+        "vars": {k: _parse_number(v) for v, k in segments},
+        "part": int(part) if part else None,
+    }
+
+
+def discover_experiment_dirs(auto_tune_dir=None, var=None):
+    """
+    Group autoTuneDir experiment folders by the value of one swept variable
+    encoded in their name. Folders for the same value that were split across
+    multiple runs (e.g. "..._256subset_size_part1" and "..._256subset_size_part2")
+    are grouped together under that one value.
 
     Parameters
     ----------
     auto_tune_dir : str or Path or None
         Defaults to hyperparam_tuning/autoTuneDir.
+    var : str or None
+        Variable to group by. If None, it's inferred, and every folder that
+        carries a variable must carry the same single one.
 
     Returns
     -------
-    dict[int, list[Path]]
-        batch_size -> sorted list of experiment directories for that batch size.
+    dict[int or float, list[Path]]
+        value -> sorted list of experiment directories for that value.
     """
     auto_tune_dir = Path(auto_tune_dir) if auto_tune_dir else AUTOTUNE_DIR
-    groups = {}
+    parsed = []
     for entry in sorted(auto_tune_dir.iterdir()):
-        if not entry.is_dir():
-            continue
-        match = _BATCHSIZE_RE.search(entry.name)
-        if not match:
-            continue
-        batch_size = int(match.group(1))
-        groups.setdefault(batch_size, []).append(entry)
+        info = parse_run_name(entry.name) if entry.is_dir() else None
+        if info and info["vars"]:
+            parsed.append((entry, info["vars"]))
+
+    if var is None:
+        var_sets = {tuple(sorted(vs)) for _, vs in parsed}
+        if len(var_sets) > 1 or any(len(vs) != 1 for vs in var_sets):
+            raise ValueError(f"can't infer a single swept variable from folder names "
+                             f"(found {sorted(var_sets)}); pass var=")
+        var = next(iter(var_sets))[0] if var_sets else None
+
+    groups = {}
+    for entry, vs in parsed:
+        if var in vs:
+            groups.setdefault(vs[var], []).append(entry)
     return groups
 
 
@@ -150,7 +203,7 @@ def iter_trial_log_paths(experiment_dir):
             yield trial_dir.name, log_path
 
 
-def collect_batchsize_trials(auto_tune_dir=None):
+def collect_batchsize_trials(auto_tune_dir=None, var=None):
     """
     Parse every trial's autotuneLogger.txt, grouped by batch size.
 
@@ -161,7 +214,7 @@ def collect_batchsize_trials(auto_tune_dir=None):
             {"experiment": str, "trial": str, "trial_dir": Path,
              "phases": parse_autotune_log(...) output}
     """
-    groups = discover_experiment_dirs(auto_tune_dir)
+    groups = discover_experiment_dirs(auto_tune_dir, var=var)
     out = {}
     for batch_size, experiment_dirs in groups.items():
         trials = []
